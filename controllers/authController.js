@@ -1,0 +1,162 @@
+import bcrypt from "bcrypt";
+import prisma from "../utils/prisma.js";
+import { generateTokens } from "../utils/token.js";
+import { sendEmail } from "../utils/mailer.js";
+import { sendSMS } from "../utils/sms.js"
+const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
+export const sendOtp = async (req, res) => {
+  try {
+    const { email, phone } = req.body;
+
+    if (!email && !phone) {
+      return res
+        .status(400)
+        .json({ message: "Email hoặc số điện thoại là bắt buộc" });
+    }
+
+    // Kiểm tra email đã tồn tại chưa
+    if (email) {
+      const existingEmail = await prisma.user.findUnique({ where: { email } });
+      if (existingEmail) {
+        return res.status(400).json({ message: "Email đã tồn tại" });
+      }
+    }
+
+    // Kiểm tra phone đã tồn tại chưa
+    if (phone) {
+      const existingPhone = await prisma.user.findUnique({ where: { phone } });
+      if (existingPhone) {
+        return res.status(400).json({ message: "Số điện thoại đã tồn tại" });
+      }
+    }
+
+    // Sinh OTP
+    const otp = generateOTP();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+    // Lưu vào bảng otp_verifications
+    await prisma.otpVerification.create({
+      data: { 
+        email, 
+        phone, 
+        otp, 
+        expiresAt,
+        used: false 
+      },
+    });
+
+    // Gửi OTP
+    if (email) {
+      await sendEmail(email, `Mã OTP của bạn là: ${otp}`);
+    }
+    if (phone) {
+      await sendSMS(phone, `Mã OTP của bạn là: ${otp}`);
+    }
+
+    return res.json({ message: "OTP đã được gửi !" });
+  } catch (error) {
+    console.error("Send OTP error:", error);
+    return res.status(500).json({ message: "Lỗi Server" });
+  }
+};
+
+export const verifyOtpAndRegister = async (req, res) => {
+  try {
+    const { username, email, phone, password, fullName, otp } = req.body;
+
+    if ((!email && !phone) || (email && phone)) {
+      return res.status(400).json({
+        message: "Bạn phải nhập 1 trong 2: email hoặc phone",
+      });
+    }
+    // tìm OTP còn hạn và chưa dùng
+    const otpRecord = await prisma.otpVerification.findFirst({
+      where: {
+        otp,
+        used: false,
+        expiresAt: { gt: new Date() },
+        OR: [
+          email ? { email } : undefined,
+          phone ? { phone } : undefined,
+        ].filter(Boolean),
+      },
+    });
+
+
+    if (!otpRecord) {
+      return res.status(400).json({ message: "OTP không hợp lệ" });
+    }
+
+    // mark OTP là đã dùng
+    await prisma.otpVerification.update({
+      where: { id: otpRecord.id },
+      data: { used: true },
+    });
+
+    // hash password và tạo user
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({
+      data: {
+        username,
+        email,
+        phone,
+        passwordHash: hashedPassword,
+        fullName,
+      },
+    });
+    const { accessToken, refreshToken } = await generateTokens(user);
+
+    return res.status(201).json({ message: "Đăng ký thành công", user });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Lỗi Sever" });
+  }
+};
+
+export const login = async (req, res) => {
+  try {
+    const { email, phone, password } = req.body;
+
+    if (!email && !phone) {
+      return res
+        .status(400)
+        .json({ message: "Email hoặc số điện thoại là bắt buộc" });
+    }
+
+    // Tìm user theo email hoặc phone
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          email ? { email } : undefined,
+          phone ? { phone } : undefined,
+        ].filter(Boolean),
+      },
+    });
+
+    if (!user) {
+      return res.status(400).json({ message: "Người dùng không tồn tại" });
+    }
+
+    // Kiểm tra password
+    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isPasswordValid) {
+      return res.status(400).json({ message: "Sai mật khẩu" });
+    }
+
+    // Tạo JWT
+    const { accessToken, refreshToken } = await generateTokens(user); 
+
+    return res.json({
+      message: "Đăng nhập thành công",
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        phone: user.phone,
+      },
+    });
+  } catch (error) {
+    console.error("Login error:", error);
+    return res.status(500).json({ message: "Lỗi Server" });
+  }
+};
