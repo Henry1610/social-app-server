@@ -103,7 +103,7 @@ model UserPrivacySetting {
 model RefreshToken {
   id           Int      @id @default(autoincrement())
   userId       Int      @map("user_id")
-  refreshToken String   @map("refresh_token") @db.VarChar(255)
+  refreshToken String   @map("refresh_token") @db.VarChar(255) @unique
   expiresAt    DateTime @map("expires_at")
   createdAt    DateTime @default(now()) @map("created_at")
   revoked      Boolean  @default(false)

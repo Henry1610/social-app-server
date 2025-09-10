@@ -1,22 +1,14 @@
 import jwt from "jsonwebtoken";
 import prisma from "./prisma.js";
 
-export const generateTokens = async (user) => {
-  // access token: sống 1h
-  const accessToken = jwt.sign(
-    { id: user.id, role: user.role },
-    process.env.JWT_SECRET,
-    { expiresIn: "1h" }
-  );
-
-  // refresh token: sống 7 ngày
+export const createRefreshToken = async (user) => {
   const refreshToken = jwt.sign(
     { id: user.id },
     process.env.JWT_SECRET,
-    { expiresIn: "7d" }
+    { expiresIn: '7d' }
   );
 
-  // lưu refresh token vào DB
+  // Lưu vào DB
   await prisma.refreshToken.create({
     data: {
       userId: user.id,
@@ -25,5 +17,22 @@ export const generateTokens = async (user) => {
     },
   });
 
-  return { accessToken, refreshToken };
+  return refreshToken;
+};
+export const createAccessToken = (user) => {
+  return jwt.sign(
+    { id: user.id, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: '1h' }
+  );
+};
+
+export const createResetPasswordToken = (user) => {
+  const token = jwt.sign(
+    { id:user.id },
+    process.env.JWT_RESET_SECRET,
+    { expiresIn: '15m' } 
+  );
+
+  return token;
 };
