@@ -2,23 +2,23 @@
 import express from 'express';
 import {
   createPost,
-  getAllPosts,
-  getPostById,
+  getAllMyPosts,
+  getMyPostById,
   updatePost,
   deletePost,
   savePost,
   unsavePost,
-  getSavedPosts
+  getMySavedPosts
 } from '../../controllers/user/post.controller.js';
 
 const router = express.Router();
 
 router.post('/', createPost);
-router.get('/', getAllPosts);
-router.get('/:id', getPostById);
-router.put('/:id', updatePost);
+router.get('/', getAllMyPosts);
+router.get('/saved-posts', getMySavedPosts);
+router.get('/:id', getMyPostById);
+router.patch('/:id', updatePost);
 router.delete('/:id', deletePost);
 router.post('/:id/save', savePost);
 router.delete('/:id/save', unsavePost);
-router.get('/save-posts', getSavedPosts);
 export default router;

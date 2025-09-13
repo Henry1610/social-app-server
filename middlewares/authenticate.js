@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { log } from 'node:console';
 
 export const authenticate = (req, res, next) => {
 
@@ -11,7 +12,7 @@ export const authenticate = (req, res, next) => {
         const decode = jwt.verify(token, process.env.JWT_SECRET);
 
         req.user = decode;
-
+        console.log('Decoded user:', req.user);
         next();
     }
     catch (err) {

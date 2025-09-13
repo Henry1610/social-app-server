@@ -31,7 +31,21 @@ enum PrivacyOption {
   followers
   nobody
 }
+enum NotificationType {
+  comment
+  follow
+  mention
+  repost
+  reaction
+}
 
+enum NotificationTargetType {
+  post
+  comment
+  user
+  story
+  message
+}
 // Core Users Table
 model User {
   id           Int       @id @default(autoincrement())
@@ -51,6 +65,14 @@ model User {
   privacySettings UserPrivacySetting?
   refreshTokens   RefreshToken[]
   passwordResets  PasswordReset[]
+  posts       Post[]
+  comments    Comment[]
+  reactions   Reaction[]
+  mentions    Mention[]
+  reposts     Repost[]
+  saved_posts SavedPost[]
+  sentNotifications     Notification[] @relation("ActorNotifications")
+  receivedNotifications Notification[] @relation("UserNotifications")
 
   // Indexes for authentication and core user operations
   @@index([username]) // Login by username
@@ -139,4 +161,221 @@ model PasswordReset {
   @@index([used])
   @@index([resetToken, used, expiresAt]) // Composite index cho validation
   @@map("password_resets")
+}
+
+// Bảng Posts - Bài đăng
+model Post {
+  id         Int       @id @default(autoincrement())
+  userId     Int       @map("user_id")
+  content    String?   @db.Text
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  deletedAt  DateTime? @map("deleted_at")
+
+  // Relations
+  user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reactions         Reaction[]  
+  media             PostMedia[]
+  privacySettings   PostPrivacySetting?
+  hashtags          PostHashtag[]
+  mentions          Mention[]
+  comments          Comment[]
+  reposts           Repost[]
+  savedPosts        SavedPost[]
+  
+  // Indexes
+  @@index([userId])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("posts")
+}
+
+// Bảng Media của Post
+model PostMedia {
+  id        Int      @id @default(autoincrement())
+  postId    Int      @map("post_id")
+  mediaUrl  String   @map("media_url") @db.VarChar(500)
+  mediaType String   @map("media_type") @db.VarChar(50) @default("image") // image, video, gif
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  // Indexes
+  @@index([postId])
+  @@index([mediaType])
+  @@map("post_media")
+}
+
+// Cài đặt riêng tư cho Post (1:1)
+model PostPrivacySetting {
+  postId        Int    @id @map("post_id")
+  whoCanSee     String @map("who_can_see") @db.VarChar(20) @default("public") // public, friends, only_me
+  whoCanComment String @map("who_can_comment") @db.VarChar(20) @default("everyone") // everyone, friends, nobody
+
+  // Relations
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([whoCanSee])
+  @@index([whoCanComment])
+  @@map("post_privacy_settings")
+}
+
+// Bảng Hashtags
+model Hashtag {
+  id        Int           @id @default(autoincrement())
+  name      String        @unique @db.VarChar(100)
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  // Relations
+  posts PostHashtag[]
+
+  @@index([name])
+  @@map("hashtags")
+}
+
+// Bảng trung gian Post-Hashtag (Many-to-Many)
+model PostHashtag {
+  postId    Int @map("post_id")
+  hashtagId Int @map("hashtag_id")
+
+  // Relations
+  post    Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  hashtag Hashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, hashtagId])
+  @@map("post_hashtags")
+}
+
+// Bảng Comments - Bình luận
+model Comment {
+  id        Int       @id @default(autoincrement())
+  postId    Int       @map("post_id")
+  userId    Int       @map("user_id")
+  parentId  Int?      @map("parent_id") // Cho nested comments
+  content   String    @db.Text
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  // Relations
+  post     Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent   Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies  Comment[] @relation("CommentReplies")
+  mentions Mention[]
+
+  // Indexes
+  @@index([postId])
+  @@index([userId])
+  @@index([parentId])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("comments")
+}
+
+// Bảng Reactions - Phản ứng (Polymorphic design)
+model Reaction {
+  id         Int      @id @default(autoincrement())
+  userId     Int      @map("user_id")
+  targetType String   @map("target_type") @db.VarChar(20) // "post" hoặc "comment"
+  targetId   Int      @map("target_id")
+  type       String   @db.VarChar(20) @default("like") // like, love, angry, sad, wow, haha
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  post Post? @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  // Unique constraint: một user chỉ react 1 lần cho 1 target
+  @@unique([userId, targetType, targetId])
+  @@index([targetType, targetId])
+  @@index([userId])
+  @@index([type])
+  @@map("reactions")
+}
+
+// Bảng Mentions - Nhắc tên
+model Mention {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id") // Người được mention
+  postId    Int?     @map("post_id") // Post chứa mention (nullable)
+  commentId Int?     @map("comment_id") // Comment chứa mention (nullable)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post    Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  comment Comment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  // Constraint: mention phải thuộc post hoặc comment
+  @@index([userId])
+  @@index([postId])
+  @@index([commentId])
+  @@map("mentions")
+}
+
+// Bảng Reposts - Chia sẻ lại
+model Repost {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  postId    Int       @map("post_id")
+  content   String?   @db.Text // Comment khi repost
+  createdAt DateTime  @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  // Unique constraint: một user chỉ repost 1 lần cho 1 post
+  @@unique([userId, postId])
+  @@index([userId])
+  @@index([postId])
+  @@index([createdAt])
+  @@map("reposts")
+}
+
+// Bảng SavedPost - Lưu bài
+model SavedPost {
+  userId  Int      @map("user_id")
+  postId  Int      @map("post_id")
+  savedAt DateTime @default(now()) @map("saved_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  // Composite primary key
+  @@id([userId, postId])
+  @@index([userId])
+  @@index([savedAt])
+  @@map("saved_posts")
+}
+
+model Notification {
+  id         Int                      @id @default(autoincrement())
+  userId     Int                      @map("user_id") // Người nhận notification
+  actorId    Int                      @map("actor_id") // Người thực hiện action
+  type       NotificationType
+  targetType NotificationTargetType   @map("target_type")
+  targetId   Int                      @map("target_id")
+  isRead     Boolean                  @default(false) @map("is_read")
+  createdAt  DateTime                 @default(now()) @map("created_at")
+
+  // Relations
+  user  User @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  actor User @relation("ActorNotifications", fields: [actorId], references: [id], onDelete: Cascade)
+
+  // Indexes
+  @@index([userId])
+  @@index([actorId])
+  @@index([type])
+  @@index([targetType, targetId])
+  @@index([isRead])
+  @@index([createdAt])
+  @@index([userId, isRead]) // Composite index cho query unread notifications
+  @@index([userId, createdAt]) // Composite index cho timeline notifications
+  @@map("notifications")
 }

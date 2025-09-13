@@ -1,9 +1,9 @@
 import express from 'express';
-import { getAllRePosts, repostPost, undoRepost } from '../../controllers/user/repost.controller.js';
+import { getAllMyReposts, repostPost, undoRepost } from '../../controllers/user/repost.controller.js';
 
 const router = express.Router();
 
-router.get('/', getAllRePosts);
+router.get('/', getAllMyReposts);
 router.post('/:id', repostPost);
 router.delete('/:id', undoRepost);
 
