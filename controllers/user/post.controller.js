@@ -35,8 +35,8 @@ export const createPost = async (req, res) => {
       await tx.postPrivacySetting.create({
         data: {
           postId: createdPost.id,
-          whoCanSee: privacySettings.whoCanSee || 'public',
-          whoCanComment: privacySettings.whoCanComment || 'everyone',
+          whoCanSee: privacySettings.whoCanSee ,
+          whoCanComment: privacySettings.whoCanComment ,
         },
       });
 

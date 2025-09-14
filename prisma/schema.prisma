@@ -212,8 +212,8 @@ model PostMedia {
 // Cài đặt riêng tư cho Post (1:1)
 model PostPrivacySetting {
   postId        Int    @id @map("post_id")
-  whoCanSee     String @map("who_can_see") @db.VarChar(20) @default("public") // public, friends, only_me
-  whoCanComment String @map("who_can_comment") @db.VarChar(20) @default("everyone") // everyone, friends, nobody
+  whoCanSee     String @map("who_can_see") @db.VarChar(20) @default("public") // public, follower, only_me
+  whoCanComment String @map("who_can_comment") @db.VarChar(20) @default("everyone") // everyone, follower, only_me
 
   // Relations
   post Post @relation(fields: [postId], references: [id], onDelete: Cascade)

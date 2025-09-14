@@ -67,7 +67,6 @@ export const sendOtp = async (req, res) => {
 export const verifyOtpAndRegister = async (req, res) => {
   try {
     const { username, email, phone, password, fullName, otp } = req.body;
-      console.log(req.body);
       
     if ((!email && !phone) || (email && phone)) {
       return res.status(400).json({
