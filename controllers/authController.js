@@ -62,11 +62,13 @@ export const sendOtp = async (req, res) => {
     return res.status(500).json({ message: "Lỗi Server" });
   }
 };
+
 // POST /api/auth/verify-otp-register
 export const verifyOtpAndRegister = async (req, res) => {
   try {
     const { username, email, phone, password, fullName, otp } = req.body;
-
+      console.log(req.body);
+      
     if ((!email && !phone) || (email && phone)) {
       return res.status(400).json({
         message: "Bạn phải nhập 1 trong 2: email hoặc phone",
@@ -75,7 +77,7 @@ export const verifyOtpAndRegister = async (req, res) => {
     // tìm OTP còn hạn và chưa dùng
     const otpRecord = await prisma.otpVerification.findFirst({
       where: {
-        otp,
+        otp:String(otp),
         used: false,
         expiresAt: { gt: new Date() },
         OR: [

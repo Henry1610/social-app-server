@@ -73,6 +73,8 @@ model User {
   saved_posts SavedPost[]
   sentNotifications     Notification[] @relation("ActorNotifications")
   receivedNotifications Notification[] @relation("UserNotifications")
+  following Follow[] @relation("Following") // user này follow người khác
+  followers Follow[] @relation("Followers") // user này được người khác follow
 
   // Indexes for authentication and core user operations
   @@index([username]) // Login by username
@@ -379,4 +381,16 @@ model Notification {
   @@index([userId, isRead]) // Composite index cho query unread notifications
   @@index([userId, createdAt]) // Composite index cho timeline notifications
   @@map("notifications")
+}
+
+model Follow {
+  followerId  Int   @map("follower_id")
+  followingId Int   @map("following_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  follower User @relation("Following", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("Followers", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, followingId])  // composite primary key
+  @@map("follows")                 // tên bảng trong DB
 }
