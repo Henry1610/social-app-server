@@ -264,6 +264,7 @@ model Comment {
   parent   Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
   replies  Comment[] @relation("CommentReplies")
   mentions Mention[]
+  reactions Reaction[] @relation("CommentReactions")
 
   // Indexes
   @@index([postId])
@@ -284,9 +285,9 @@ model Reaction {
   createdAt  DateTime @default(now()) @map("created_at")
 
   // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  post Post? @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post    Post?   @relation(fields: [targetId], references: [id], map: "reaction_post_fkey")
+  comment Comment? @relation("CommentReactions", fields: [targetId], references: [id], map: "reaction_comment_fkey")
 
   // Unique constraint: một user chỉ react 1 lần cho 1 target
   @@unique([userId, targetType, targetId])
