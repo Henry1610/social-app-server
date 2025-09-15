@@ -8,7 +8,8 @@ import {
     getFollowers,
     getFollowStatus,
     getFollowStats,
-    getMutualFollowers
+    getMutualFollowers,
+    getFollowSuggestions
 
 } from '../../controllers/user/follow.controller.js';
 
@@ -22,5 +23,6 @@ router.delete('/:username/remove-follower', removeFollower);
 router.post('/:username/status', getFollowStatus);
 router.get('/:username/stats', getFollowStats);
 router.get('/:username/mutual', getMutualFollowers);
+router.get('/suggestions', getFollowSuggestions);
 
 export default router;
