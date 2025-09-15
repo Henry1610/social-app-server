@@ -105,9 +105,10 @@ model OtpVerification {
 // User Privacy Settings (1:1 relationship)
 model UserPrivacySetting {
   userId              Int           @id @map("user_id")
+  isPrivate           Boolean       @default(false) @map("is_private")
   whoCanMessage       PrivacyOption @default(everyone) @map("who_can_message")
   whoCanTagMe         PrivacyOption @default(everyone) @map("who_can_tag_me")
-  whoCanFindByEmail   Boolean       @default(true) @map("who_can_find_by_email")
+  whoCanFindByUsername   Boolean       @default(true) @map("who_can_find_by_username")
   showOnlineStatus    Boolean       @default(true) @map("show_online_status")
   createdAt           DateTime      @default(now()) @map("created_at")
   updatedAt           DateTime      @updatedAt @map("updated_at")
@@ -116,9 +117,10 @@ model UserPrivacySetting {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Indexes
+  @@index([isPrivate])
   @@index([whoCanMessage])
-  @@index([whoCanTagMe])
-  @@index([whoCanFindByEmail])
+  @@index([whoCanTagMe])  
+  @@index([whoCanFindByUsername])
   @@index([showOnlineStatus])
   @@map("user_privacy_settings")
 }
@@ -384,8 +386,8 @@ model Notification {
 }
 
 model Follow {
-  followerId  Int   @map("follower_id")
-  followingId Int   @map("following_id")
+  followerId  Int   @map("follower_id")     // id của người đi follow
+  followingId Int   @map("following_id")    // id của người bị follow
   createdAt   DateTime @default(now()) @map("created_at")
 
   follower User @relation("Following", fields: [followerId], references: [id], onDelete: Cascade)
