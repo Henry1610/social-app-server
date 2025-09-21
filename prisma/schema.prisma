@@ -20,10 +20,18 @@ datasource db {
 // Description: Users, privacy settings, refresh tokens, password resets
 // ========================================
 
-// Enums
 enum UserRole {
   user
   admin
+}
+
+enum ReactionType {
+  LIKE
+  LOVE
+  HAHA
+  WOW
+  SAD
+  ANGRY
 }
 
 enum PrivacyOption {
@@ -31,22 +39,33 @@ enum PrivacyOption {
   followers
   nobody
 }
+
+enum TargetType {
+  POST
+  COMMENT
+  STORY
+  MESSAGE
+  REEL
+}
+
 enum NotificationType {
-  comment
-  follow
-  mention
-  repost
-  reaction
+  COMMENT
+  FOLLOW
+  MENTION
+  REPOST
+  REPLY
+  FOLLOW_REQUEST
+  REACTION
 }
 
 enum NotificationTargetType {
-  post
-  comment
-  user
-  story
-  message
+  POST
+  COMMENT
+  USER
+  STORY
+  MESSAGE
 }
-// Core Users Table
+
 model User {
   id           Int       @id @default(autoincrement())
   username     String    @unique @db.VarChar(50)
@@ -86,7 +105,6 @@ model User {
   @@map("users")
 }
 
-//otp verify
 model OtpVerification {
   id        Int      @id @default(autoincrement())
   phone     String?  @db.VarChar(15)
@@ -102,9 +120,9 @@ model OtpVerification {
   @@map("otp_verifications")
 }
 
-// User Privacy Settings (1:1 relationship)
 model UserPrivacySetting {
   userId              Int           @id @map("user_id")
+  isPrivate           Boolean       @default(false) @map("is_private")
   whoCanMessage       PrivacyOption @default(everyone) @map("who_can_message")
   whoCanTagMe         PrivacyOption @default(everyone) @map("who_can_tag_me")
   whoCanFindByEmail   Boolean       @default(true) @map("who_can_find_by_email")
@@ -123,7 +141,6 @@ model UserPrivacySetting {
   @@map("user_privacy_settings")
 }
 
-// Refresh Tokens for JWT authentication
 model RefreshToken {
   id           Int      @id @default(autoincrement())
   userId       Int      @map("user_id")
@@ -144,7 +161,6 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
-// Password Reset Tokens
 model PasswordReset {
   id         Int      @id @default(autoincrement())
   userId     Int      @map("user_id")
@@ -165,7 +181,6 @@ model PasswordReset {
   @@map("password_resets")
 }
 
-// Bảng Posts - Bài đăng
 model Post {
   id         Int       @id @default(autoincrement())
   userId     Int       @map("user_id")
@@ -176,7 +191,6 @@ model Post {
 
   // Relations
   user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reactions         Reaction[]  
   media             PostMedia[]
   privacySettings   PostPrivacySetting?
   hashtags          PostHashtag[]
@@ -192,7 +206,6 @@ model Post {
   @@map("posts")
 }
 
-// Bảng Media của Post
 model PostMedia {
   id        Int      @id @default(autoincrement())
   postId    Int      @map("post_id")
@@ -209,7 +222,6 @@ model PostMedia {
   @@map("post_media")
 }
 
-// Cài đặt riêng tư cho Post (1:1)
 model PostPrivacySetting {
   postId        Int    @id @map("post_id")
   whoCanSee     String @map("who_can_see") @db.VarChar(20) @default("public") // public, follower, only_me
@@ -223,7 +235,6 @@ model PostPrivacySetting {
   @@map("post_privacy_settings")
 }
 
-// Bảng Hashtags
 model Hashtag {
   id        Int           @id @default(autoincrement())
   name      String        @unique @db.VarChar(100)
@@ -236,7 +247,6 @@ model Hashtag {
   @@map("hashtags")
 }
 
-// Bảng trung gian Post-Hashtag (Many-to-Many)
 model PostHashtag {
   postId    Int @map("post_id")
   hashtagId Int @map("hashtag_id")
@@ -249,7 +259,6 @@ model PostHashtag {
   @@map("post_hashtags")
 }
 
-// Bảng Comments - Bình luận
 model Comment {
   id        Int       @id @default(autoincrement())
   postId    Int       @map("post_id")
@@ -266,7 +275,6 @@ model Comment {
   parent   Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
   replies  Comment[] @relation("CommentReplies")
   mentions Mention[]
-  reactions Reaction[] @relation("CommentReactions")
 
   // Indexes
   @@index([postId])
@@ -277,29 +285,62 @@ model Comment {
   @@map("comments")
 }
 
-// Bảng Reactions - Phản ứng (Polymorphic design)
 model Reaction {
   id         Int      @id @default(autoincrement())
   userId     Int      @map("user_id")
-  targetType String   @map("target_type") @db.VarChar(20) // "post" hoặc "comment"
+  targetType TargetType     @map("target_type") 
   targetId   Int      @map("target_id")
-  type       String   @db.VarChar(20) @default("like") // like, love, angry, sad, wow, haha
+  reactionType  String      @map("reaction_type") // "like", "love", "fire", "super_love"
   createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
 
   // Relations
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  post    Post?   @relation(fields: [targetId], references: [id], map: "reaction_post_fkey")
-  comment Comment? @relation("CommentReactions", fields: [targetId], references: [id], map: "reaction_comment_fkey")
+  reactionConfig ReactionConfig @relation(fields: [reactionType], references: [type])
+
 
   // Unique constraint: một user chỉ react 1 lần cho 1 target
   @@unique([userId, targetType, targetId])
   @@index([targetType, targetId])
   @@index([userId])
-  @@index([type])
+  @@index([reactionType])
+  @@index([createdAt])
   @@map("reactions")
 }
 
-// Bảng Mentions - Nhắc tên
+model ReactionSummary {
+  id         Int      @id @default(autoincrement())
+  targetType    TargetType @map("target_type")
+  targetId      Int     @map("target_id")
+  reactionType  String     @map("reaction_type")
+  count         Int        @default(0)
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+
+  // Relation to config
+  reactionConfig ReactionConfig @relation(fields: [reactionType], references: [type])
+
+  @@unique([targetType, targetId, reactionType])
+  @@index([targetType, targetId])
+  @@map("reaction_summaries")
+}
+
+model ReactionConfig {
+  id         Int      @id @default(autoincrement())
+  type        String   @unique // "like", "love", "fire", "super_love"
+  name        String   // "Like", "Love", "Fire", "Super Love"
+  emoji       String   // "👍", "❤️", "🔥", "😍"
+  color       String?  // "#007AFF", "#FF3B30"
+  isActive    Boolean  @default(true) @map("is_active")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Relations
+  reactions        Reaction[]        @relation
+  reactionSummaries ReactionSummary[] @relation
+  notifications      Notification[]
+  @@map("reaction_configs")
+}
+
 model Mention {
   id        Int      @id @default(autoincrement())
   userId    Int      @map("user_id") // Người được mention
@@ -319,7 +360,6 @@ model Mention {
   @@map("mentions")
 }
 
-// Bảng Reposts - Chia sẻ lại
 model Repost {
   id        Int       @id @default(autoincrement())
   userId    Int       @map("user_id")
@@ -340,7 +380,6 @@ model Repost {
   @@map("reposts")
 }
 
-// Bảng SavedPost - Lưu bài
 model SavedPost {
   userId  Int      @map("user_id")
   postId  Int      @map("post_id")
@@ -359,17 +398,24 @@ model SavedPost {
 
 model Notification {
   id         Int                      @id @default(autoincrement())
-  userId     Int                      @map("user_id") // Người nhận notification
-  actorId    Int                      @map("actor_id") // Người thực hiện action
+  userId     Int                      @map("user_id")      // Người nhận notification
+  actorId    Int                      @map("actor_id")     // Người thực hiện action
   type       NotificationType
   targetType NotificationTargetType   @map("target_type")
   targetId   Int                      @map("target_id")
   isRead     Boolean                  @default(false) @map("is_read")
   createdAt  DateTime                 @default(now()) @map("created_at")
+  updatedAt  DateTime                 @default(now()) @map("updated_at")
+  templateId Int?                     @map("template_id")
+  reactionId Int?                     @map("reaction_id")
 
   // Relations
-  user  User @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
-  actor User @relation("ActorNotifications", fields: [actorId], references: [id], onDelete: Cascade)
+  user     User                  @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  actor    User                  @relation("ActorNotifications", fields: [actorId], references: [id], onDelete: Cascade)
+  template NotificationTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  reaction ReactionConfig?       @relation(fields: [reactionId], references: [id], onDelete: SetNull)
+
+  metadata Json?  // Dữ liệu bổ sung
 
   // Indexes
   @@index([userId])
@@ -378,9 +424,35 @@ model Notification {
   @@index([targetType, targetId])
   @@index([isRead])
   @@index([createdAt])
-  @@index([userId, isRead]) // Composite index cho query unread notifications
-  @@index([userId, createdAt]) // Composite index cho timeline notifications
+
+  // Composite indexes
+  @@index([userId, isRead])       // Query unread notifications
+  @@index([userId, createdAt])    // Query timeline
+
+  // Unique constraints
+  // 1 notification duy nhất cho Like hoặc Follow
+  @@unique([userId, type, targetType, targetId], map: "unique_like_follow") 
   @@map("notifications")
+}
+
+
+model NotificationTemplate {
+  id        Int                     @id @default(autoincrement())
+  type      NotificationType        @unique
+  targetType NotificationTargetType? 
+  template  String                  // Template với placeholder: "{{actor_name}} đã thích {{target_type}} của bạn"
+  isActive  Boolean                 @default(true) @map("is_active")
+  createdAt DateTime                @default(now()) @map("created_at")
+  updatedAt DateTime                @updatedAt @map("updated_at")
+
+  // Relations
+  notifications Notification[]
+
+  // Indexes
+  @@unique([type, targetType])
+  @@index([type])
+  @@index([isActive])
+  @@map("notification_templates")
 }
 
 model Follow {

@@ -1,11 +1,17 @@
 import express from 'express'
 import route from './routes/index.js';
+import http from "http";
+import { initSocket } from './config/socket.js';
+import { registerSocketHandlers } from './socket/index.js'
 
 const app=express();
-app.use(express.json())
+const server = http.createServer(app);
+
+initSocket(server);
+registerSocketHandlers();
+app.use(express.json());
 route(app);
 
-
-app.listen(5000, () => {
-  console.log('Server running on http://localhost:5000');
+server.listen(5000, () => {
+  console.log(`Server running on ${process.env.SERVER_PORT}`);
 });

@@ -157,6 +157,8 @@ export const commentPost = async (req, res) => {
         }
       }
     });
+
+    emitNewComment(Number(id), newComment);
     res.status(201).json({
       success: true,
       message: 'Bình luận đã được thêm!',
@@ -183,7 +185,7 @@ export const editComment = async (req, res) => {
         userId: userId,
         deletedAt: null
       },
-      select: { id: true }
+      select: { id: true, postId: true }
     });
     if (!commentExists) {
       return res.status(404).json({
@@ -207,6 +209,8 @@ export const editComment = async (req, res) => {
         }
       }
     });
+    emitCommentUpdate(commentExists.postId, updatedComment)
+
     res.json({
       success: true,
       message: 'Bình luận đã được cập nhật!',
@@ -232,7 +236,7 @@ export const deleteComment = async (req, res) => {
         userId: userId,
         deletedAt: null
       },
-      select: { id: true }
+      select: { id: true , postId: true}
     });
     if (!commentExists) {
       return res.status(404).json({
@@ -245,6 +249,8 @@ export const deleteComment = async (req, res) => {
       where: { id: Number(id) },
       data: { deletedAt: new Date() }
     });
+    emitCommentDelete(commentExists.postId, commentExists.id)
+
     res.json({
       success: true,
       message: 'Bình luận đã được xóa!'
