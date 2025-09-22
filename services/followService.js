@@ -3,7 +3,6 @@ import { incrementFollowerCount, decrementFollowerCount } from "./redis/followSe
 import { createNotification } from "./notificationService.js";
 import { emitFollow, emitUnfollow, emitFollowRequest, emitFollowAccepted, emitFollowRejected } from "../socket/events/followEvents.js";
 import { getUserById } from "./userService.js";
-import { log } from "console";
 
 // Tạo follow
 export const createFollow = async (followerId, followingId) => {

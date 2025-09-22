@@ -1,9 +1,9 @@
 import { followUserService, unfollowUserService } from "../../services/followService.js";
 import { getFollowersList, getFollowingList } from "../../services/redis/followService.js";
-
-// POST api/user/follows/:username/follow
+import prisma from "../../utils/prisma.js";
+// POST api/user/follows/:username
 export const followUser = async (req, res) => {
-    const { id } = req.params;
+    const id  = req.resolvedUserId;
     const userId = req.user.id;
 
     try {
@@ -20,9 +20,9 @@ export const followUser = async (req, res) => {
     }
 };
 
-// DELETE api/user/follow/:id
+// DELETE api/user/follow/:username
 export const unfollowUser = async (req, res) => {
-    const { id } = req.params;
+    const id  = req.resolvedUserId;
     const userId = req.user.id;
     
     try {
@@ -62,11 +62,6 @@ export const getMyFollowers = async (req, res) => {
         });
     }
 };
-
-// DELETE /api/user/follow/:username/remove-follower
-export const removeFollower = async (req, res) => {
-    const { username } = req.params;
-    const currentUserId = req.user.id;
 
 // GET api/user/follow/following
 export const getMyFollowings = async (req, res) => {
