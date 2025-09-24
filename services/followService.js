@@ -79,14 +79,14 @@ export const hasFollowRequest = async (followerId, followingId) => {
 };
 
 // Chấp nhận follow request
-export const acceptFollowRequest = async (followerId, followingId) => {
+export const acceptFollowRequestService = async (followerId, followingId) => {
   // Tạo follow
   await createFollow(followerId, followingId);
   await incrementFollowerCount(followingId);
-  
+
   // Xóa follow request
   await deleteFollowRequest(followerId, followingId);
-  
+
   // Tạo notification
   await createNotification({
     userId: followerId,
@@ -95,16 +95,16 @@ export const acceptFollowRequest = async (followerId, followingId) => {
     targetType: "USER",
     targetId: followerId
   });
-  
+
   // Emit realtime event
   emitFollowAccepted({ id: followingId }, { id: followerId });
 };
 
 // Từ chối follow request
-export const rejectFollowRequest = async (followerId, followingId) => {
+export const rejectFollowRequestService = async (followerId, followingId) => {
   // Xóa follow request
   await deleteFollowRequest(followerId, followingId);
-  
+
   // Emit realtime event
   emitFollowRejected({ id: followingId }, { id: followerId });
 };
@@ -140,7 +140,7 @@ export const followUserService = async (userId, followingId) => {
     if (targetUser.isPrivate) {
       // Tài khoản private - tạo follow request thay vì follow trực tiếp
       await createFollowRequest(userId, Number(followingId));
-      
+
       // Tạo notification cho follow request
       await createNotification({
         userId: Number(followingId),
@@ -149,12 +149,12 @@ export const followUserService = async (userId, followingId) => {
         targetType: "USER",
         targetId: Number(followingId)
       });
-      
+
       // Emit realtime event
       emitFollowRequest({ id: userId }, { id: Number(followingId) });
 
-      return { 
-        success: true, 
+      return {
+        success: true,
         message: "Yêu cầu theo dõi đã được gửi! Chờ người dùng chấp nhận.",
         isPrivate: true
       };
@@ -162,7 +162,7 @@ export const followUserService = async (userId, followingId) => {
       // Tài khoản public - follow trực tiếp
       await createFollow(userId, Number(followingId));
       await incrementFollowerCount(Number(followingId));
-      
+
       // Tạo notification
       await createNotification({
         userId: Number(followingId),
@@ -171,12 +171,12 @@ export const followUserService = async (userId, followingId) => {
         targetType: "USER",
         targetId: Number(followingId)
       });
-      
+
       // Emit realtime event
       emitFollow({ id: userId }, { id: Number(followingId) });
 
-      return { 
-        success: true, 
+      return {
+        success: true,
         message: "Bạn đã theo dõi người dùng!",
         isPrivate: false
       };
@@ -199,7 +199,7 @@ export const unfollowUserService = async (userId, followingId) => {
     // Business logic
     await deleteFollow(userId, Number(followingId));
     await decrementFollowerCount(Number(followingId));
-    
+
     // Emit realtime event
     emitUnfollow(userId, Number(followingId));
 
@@ -210,3 +210,12 @@ export const unfollowUserService = async (userId, followingId) => {
   }
 };
 
+export const removeFollowerService = async (userId, followingId) => {
+  try {
+    await deleteFollow(userId, Number(followingId));
+    await decrementFollowerCount(Number(followingId));
+  } catch (error) {
+    console.error('Error in removeFollowerService:', error);
+    return { success: false, message: "Lỗi server khi xóa người theo dõi!" };
+  }
+};

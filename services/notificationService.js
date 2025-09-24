@@ -10,71 +10,97 @@ import {
 } from "./redis/notificationService.js";
 const TIME_WINDOW = 5 * 60 * 1000;
 
-export const createNotification=async({
-    userId,
-    actorId,
-    type,
-    targetType,
-    targetId 
-  }) =>{
-    const now = new Date();
+export const createNotification = async ({
+  userId,
+  actorId,
+  type,
+  targetType,
+  targetId
+}) => {
+  const now = new Date();
 
-    // MESSAGE hoặc FOLLOW_REQUEST → tạo riêng
-    if (type === "MESSAGE" || type === "FOLLOW_REQUEST") {
-      const metadata = { senderId: actorId };
-      const notification = await prisma.notification.create({
-        data: { userId, type, targetType, targetId, metadata }
-      });
-      
-      // Cache notification in Redis
-      await cacheNotification(userId, notification);
-      
-      pushRealtimeNotification(userId, notification);
-      return notification;
-    }
-  
-    // Các loại còn lại → gom chung
-    let notification = await prisma.notification.findFirst({
-      where: { userId, type, targetType, targetId },
-      orderBy: { updatedAt: "desc" }
+  // Trường hợp đặc biệt: MESSAGE hoặc FOLLOW_REQUEST
+  if (type === "MESSAGE" || type === "FOLLOW_REQUEST") {
+    const metadata = { senderId: actorId };
+    const notification = await prisma.notification.create({
+      data: { userId, type, targetType, targetId, metadata }
     });
-  
-    if (notification && now.getTime() - notification.updatedAt.getTime() < TIME_WINDOW) {
-      // Update metadata gom actor
-      const metadata = notification.metadata || {};
-      metadata.actorIds = metadata.actorIds || [];
-      if (!metadata.actorIds.includes(actorId)) {
-        metadata.actorIds.push(actorId);
-      }
-      metadata.count = metadata.actorIds.length;
-      metadata.lastActorName = await getUserName(actorId);
-  
-      notification = await prisma.notification.update({
-        where: { id: notification.id },
-        data: { metadata, updatedAt: now }
-      });
-      
-      // Update cache
-      await cacheNotification(userId, notification);
-  
-    } else {
-      // Tạo notification mới
-      const metadata = {
-        actorIds: [actorId],
-        count: 1,
-        lastActorName: await getUserName(actorId)
-      };
-      notification = await prisma.notification.create({
-        data: { userId,actorId, type, targetType, targetId, metadata }
-      });
-      
-      // Cache notification in Redis
-      await cacheNotification(userId, notification);
-    }
-  
+
+    await cacheNotification(userId, notification);
     pushRealtimeNotification(userId, notification);
     return notification;
   }
+
+  // Gom nhóm cho các loại còn lại
+  const key = {
+  userId_type_targetType_targetId: {
+    userId,
+    type,
+    targetType,
+    targetId
+  }
+};
+
+
+  // Thử tìm notification hiện có
+  let notification = await prisma.notification.findUnique({ where: key });
+
+  if (
+    notification &&
+    now.getTime() - notification.updatedAt.getTime() < TIME_WINDOW
+  ) {
+    // Nếu trong TIME_WINDOW → gom vào notification cũ
+    const metadata = notification.metadata || {};
+    metadata.actorIds = metadata.actorIds || [];
+
+    if (!metadata.actorIds.includes(actorId)) {
+      metadata.actorIds.push(actorId);
+    }
+
+    metadata.count = metadata.actorIds.length;
+    metadata.lastActorName = await getUserName(actorId);
+
+    notification = await prisma.notification.upsert({
+      where: key,
+      update: { metadata, updatedAt: now },
+      create: {
+        userId,
+        actorId,
+        type,
+        targetType,
+        targetId,
+        metadata
+      }
+    });
+  } else {
+    // Quá hạn TIME_WINDOW hoặc chưa có notification → tạo mới
+    const metadata = {
+      actorIds: [actorId],
+      count: 1,
+      lastActorName: await getUserName(actorId)
+    };
+
+    notification = await prisma.notification.upsert({
+      where: key,
+      update: { metadata, updatedAt: now },
+      create: {
+        userId,
+        actorId,
+        type,
+        targetType,
+        targetId,
+        metadata
+      }
+    });
+  }
+
+  // Cập nhật cache + realtime
+  await cacheNotification(userId, notification);
+  pushRealtimeNotification(userId, notification);
+
+  return notification;
+};
+
 
 // Hàm lấy tên user theo ID
 const getUserName = async (userId) => {

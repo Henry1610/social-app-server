@@ -1,14 +1,15 @@
-import { followUserService, unfollowUserService } from "../../services/followService.js";
+import { followUserService, unfollowUserService, acceptFollowRequestService, rejectFollowRequestService, removeFollowerService } from "../../services/followService.js";
 import { getFollowersList, getFollowingList } from "../../services/redis/followService.js";
 import prisma from "../../utils/prisma.js";
-// POST api/user/follows/:username
+
+// POST api/user/follows/:username ( nếu là tk private thì tạo follow request)
 export const followUser = async (req, res) => {
-    const id  = req.resolvedUserId;
+    const id = req.resolvedUserId;
     const userId = req.user.id;
 
     try {
         const result = await followUserService(userId, Number(id));
-        
+
         if (result.success) {
             res.status(201).json(result);
         } else {
@@ -22,12 +23,12 @@ export const followUser = async (req, res) => {
 
 // DELETE api/user/follow/:username
 export const unfollowUser = async (req, res) => {
-    const id  = req.resolvedUserId;
+    const id = req.resolvedUserId;
     const userId = req.user.id;
-    
+
     try {
         const result = await unfollowUserService(userId, Number(id));
-        
+
         if (result.success) {
             res.json(result);
         } else {
@@ -38,6 +39,88 @@ export const unfollowUser = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Lỗi server khi hủy theo dõi người dùng!'
+        });
+    }
+}
+
+//GET /api/user/follow/requests
+export const getFollowRequests = async (req, res) => {
+    const userId = req.user.id;
+    try {
+        // Lấy danh sách follow requests
+        const requests = await prisma.followRequest.findMany({
+            where: { toUserId: userId },
+            select: {
+                id: true,
+                fromUser: {
+                    select: { id: true, username: true, fullName: true, avatarUrl: true }
+                },
+                createdAt: true
+            },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        res.json({
+            success: true,
+            requests
+        });
+    } catch (error) {
+        console.error('Error getting follow requests:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server khi lấy danh sách yêu cầu theo dõi!'
+
+        });
+    }
+}
+
+//POST /api/user/follow/requests/:requestId/accept
+export const acceptFollowRequest = async (req, res) => {
+    const { requestId } = req.params;
+    const userId = req.user.id;
+    try {
+        const result = await acceptFollowRequestService(userId, Number(requestId));
+        res.json(result);
+    } catch (error) {
+        console.error('Error accepting follow request:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server khi chấp nhận yêu cầu theo dõi!'
+        });
+    }
+}
+
+//DELETE /api/user/follow/requests/:requestId/reject
+export const rejectFollowRequest = async (req, res) => {
+    const { requestId } = req.params;
+    const userId = req.user.id;
+    try {
+        const result = await rejectFollowRequestService(userId, Number(requestId));
+        res.json(result);
+    }
+    catch (error) {
+        console.error('Error rejecting follow request:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server khi từ chối yêu cầu theo dõi!'
+        });
+    }
+
+}
+
+//DELETE /api/user/follow/:username/remove-follower
+export const removeFollower = async (req, res) => {
+    const { username } = req.params;
+    const userId = req.user.id;
+    try {
+        const result = await removeFollowerService(userId, Number(username));
+        res.json(result);
+    }
+    catch (error) {
+        console.error('Error removing follower:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi server khi xóa người theo dõi!'
         });
     }
 }
@@ -63,7 +146,7 @@ export const getMyFollowers = async (req, res) => {
     }
 };
 
-// GET api/user/follow/following
+// GET api/user/follow/followings
 export const getMyFollowings = async (req, res) => {
     const userId = req.user.id;
     try {
@@ -144,7 +227,7 @@ export const getFollowings = async (req, res) => {
 export const getFollowers = async (req, res) => {
     const { username } = req.params;
     const currentUserId = req.user.id;
-    
+
     try {
         // Tìm user theo username
         const user = await prisma.user.findUnique({
@@ -156,14 +239,14 @@ export const getFollowers = async (req, res) => {
                 }
             }
         });
-        
+
         if (!user) {
             return res.status(404).json({
                 success: false,
                 message: 'User không tồn tại!'
             });
         }
-        
+
         // Nếu tài khoản private và không phải chính chủ → chặn
         if (user.privacySetting?.isPrivate && user.id !== currentUserId) {
             return res.status(403).json({
@@ -240,8 +323,8 @@ export const getFollowStatus = async (req, res) => {
             isFollowing: !!follow,
             isSelf: false
         });
-    }   catch (error) {       
-        console.error('Error getting follow status:', error);   
+    } catch (error) {
+        console.error('Error getting follow status:', error);
         res.status(500).json({
             success: false,
             message: 'Lỗi server khi kiểm tra trạng thái follow!'
