@@ -10,6 +10,7 @@ import {
     getFollowRequests,
     acceptFollowRequest,
     rejectFollowRequest,
+    removeFollower,
     
 
 } from '../../controllers/user/follow.controller.js';
@@ -20,11 +21,11 @@ const router = express.Router();
 router.get('/requests', getFollowRequests);
 router.get('/followings', getMyFollowings);
 router.get('/followers', getMyFollowers);
-router.post('/:username', resolveUser, followUser);
-router.delete('/:username', resolveUser, unfollowUser);
 router.post('/requests/:requestId/accept', acceptFollowRequest);
 router.delete('/requests/:requestId/reject', rejectFollowRequest);
-router.delete('/:username/remove-follower', rejectFollowRequest);
+router.post('/:username', resolveUser, followUser);
+router.delete('/:username', resolveUser, unfollowUser);
+router.delete('/:username/remove-follower',resolveUser, removeFollower);
 router.get('/:username/following', resolveUser, getFollowings);
 router.get('/:username/follower', resolveUser, getFollowers);
 
@@ -34,3 +35,4 @@ router.get('/:username/follower', resolveUser, getFollowers);
 // router.get('/suggestions', getFollowSuggestions);
 
 export default router;
+//thiếu gỡ yêu cầu theo dõi

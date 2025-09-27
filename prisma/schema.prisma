@@ -25,12 +25,6 @@ enum UserRole {
   admin
 }
 
-enum FollowRequestStatus {
-  PENDING
-  ACCEPTED
-  REJECTED
-}
-
 enum ReactionType {
   LIKE
   LOVE
@@ -61,6 +55,8 @@ enum NotificationType {
   REPOST
   REPLY
   FOLLOW_REQUEST
+  FOLLOW_ACCEPTED
+  FOLLOW_REJECTED
   REACTION
 }
 
@@ -444,7 +440,6 @@ model Notification {
   @@map("notifications")
 }
 
-
 model NotificationTemplate {
   id        Int                     @id @default(autoincrement())
   type      NotificationType        @unique
@@ -475,20 +470,19 @@ model Follow {
   @@id([followerId, followingId])  // composite primary key
   @@map("follows")                 // tên bảng trong DB
 }
-model FollowRequest {
-  id        String              @id @default(uuid())
 
+model FollowRequest {
+  id        Int   @id @default(autoincrement())
   fromUserId Int
   fromUser   User               @relation("FollowRequestsSent", fields: [fromUserId], references: [id])
 
   toUserId   Int
   toUser     User               @relation("FollowRequestsReceived", fields: [toUserId], references: [id])
 
-  status     FollowRequestStatus @default(PENDING)
-
   createdAt  DateTime            @default(now())
   updatedAt  DateTime            @updatedAt
 
   @@unique([fromUserId, toUserId]) // 1 user chỉ gửi 1 request cho 1 user
-  @@index([toUserId, status])      // tăng tốc query lấy request pending cho 1 user
+  @@index([toUserId])      // tăng tốc query lấy request pending cho 1 user
+  @@map("follow_requests")
 }

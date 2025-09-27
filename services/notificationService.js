@@ -1,9 +1,9 @@
-import  prisma from "../utils/prisma.js";
+import prisma from "../utils/prisma.js";
 import { getUserById } from "./userService.js";
 import { getIO } from "../config/socket.js";
-import { 
-  cacheNotification, 
-  getCachedNotifications, 
+import {
+  cacheNotification,
+  getCachedNotifications,
   getUnreadCount,
   markNotificationAsReadInCache,
   markAllNotificationsAsReadInCache
@@ -22,8 +22,27 @@ export const createNotification = async ({
   // Trường hợp đặc biệt: MESSAGE hoặc FOLLOW_REQUEST
   if (type === "MESSAGE" || type === "FOLLOW_REQUEST") {
     const metadata = { senderId: actorId };
-    const notification = await prisma.notification.create({
-      data: { userId, type, targetType, targetId, metadata }
+
+    const key = {
+      userId_type_targetType_targetId: {
+        userId,
+        type,
+        targetType,
+        targetId
+      }
+    };
+
+    const notification = await prisma.notification.upsert({
+      where: key,
+      update: { metadata, updatedAt: now },
+      create: {
+        user: { connect: { id: userId } },
+        actor: { connect: { id: actorId } },
+        type,
+        targetType,
+        targetId,
+        metadata
+      }
     });
 
     await cacheNotification(userId, notification);
@@ -33,14 +52,13 @@ export const createNotification = async ({
 
   // Gom nhóm cho các loại còn lại
   const key = {
-  userId_type_targetType_targetId: {
-    userId,
-    type,
-    targetType,
-    targetId
-  }
-};
-
+    userId_type_targetType_targetId: {
+      userId,
+      type,
+      targetType,
+      targetId
+    }
+  };
 
   // Thử tìm notification hiện có
   let notification = await prisma.notification.findUnique({ where: key });
@@ -64,8 +82,8 @@ export const createNotification = async ({
       where: key,
       update: { metadata, updatedAt: now },
       create: {
-        userId,
-        actorId,
+        user: { connect: { id: userId } },
+        actor: { connect: { id: actorId } },
         type,
         targetType,
         targetId,
@@ -84,8 +102,8 @@ export const createNotification = async ({
       where: key,
       update: { metadata, updatedAt: now },
       create: {
-        userId,
-        actorId,
+        user: { connect: { id: userId } },
+        actor: { connect: { id: actorId } },
         type,
         targetType,
         targetId,
@@ -128,7 +146,7 @@ export const pushRealtimeNotification = (userId, notification) => {
         createdAt: notification.createdAt,
         updatedAt: notification.updatedAt
       });
-      
+
       console.log(`Notification sent to user ${userId}:`, notification.type);
     } else {
       console.warn('Socket.IO not initialized, notification not sent');
@@ -143,14 +161,14 @@ export const getUserNotifications = async (userId, page = 1, limit = 20) => {
   try {
     // Thử lấy từ cache trước
     const cachedResult = await getCachedNotifications(userId, page, limit);
-    
+
     if (cachedResult.notifications.length > 0) {
       return cachedResult;
     }
 
     // Nếu cache không có, lấy từ database
     const skip = (page - 1) * limit;
-    
+
     const notifications = await prisma.notification.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
@@ -190,12 +208,12 @@ export const getUserNotifications = async (userId, page = 1, limit = 20) => {
 export const markNotificationAsRead = async (notificationId, userId) => {
   try {
     const notification = await prisma.notification.updateMany({
-      where: { 
+      where: {
         id: notificationId,
-        userId 
+        userId
       },
-      data: { 
-        readAt: new Date() 
+      data: {
+        readAt: new Date()
       }
     });
 
@@ -215,12 +233,12 @@ export const markNotificationAsRead = async (notificationId, userId) => {
 export const markAllNotificationsAsRead = async (userId) => {
   try {
     await prisma.notification.updateMany({
-      where: { 
+      where: {
         userId,
-        readAt: null 
+        readAt: null
       },
-      data: { 
-        readAt: new Date() 
+      data: {
+        readAt: new Date()
       }
     });
 
@@ -245,9 +263,9 @@ export const getUnreadNotificationCount = async (userId) => {
 
     // Nếu cache không có, lấy từ database
     const count = await prisma.notification.count({
-      where: { 
+      where: {
         userId,
-        readAt: null 
+        readAt: null
       }
     });
 

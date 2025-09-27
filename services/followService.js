@@ -6,10 +6,21 @@ import { getUserById } from "./userService.js";
 
 // Tạo follow
 export const createFollow = async (followerId, followingId) => {
-  return await prisma.follow.create({
-    data: { followerId, followingId }
+  return await prisma.follow.upsert({
+    where: {
+      followerId_followingId: { // composite key
+        followerId,
+        followingId
+      }
+    },
+    update: {}, // nếu đã tồn tại thì không update gì cả
+    create: {
+      followerId,
+      followingId
+    }
   });
 };
+
 
 // Xóa follow
 export const deleteFollow = async (followerId, followingId) => {
@@ -56,39 +67,48 @@ export const getFollowingByUserId = async (userId) => {
 };
 
 // Tạo follow request (cho tài khoản private)
-export const createFollowRequest = async (followerId, followingId) => {
+export const createFollowRequest = async (fromUserId, toUserId) => {
   return await prisma.followRequest.create({
-    data: { followerId, followingId }
+    data: { fromUserId, toUserId }
   });
 };
 
 // Xóa follow request
 export const deleteFollowRequest = async (followerId, followingId) => {
   return await prisma.followRequest.delete({
-    where: { followerId_followingId: { followerId, followingId } }
+    where: {
+      fromUserId_toUserId: {
+        fromUserId: followerId,
+        toUserId: followingId
+      }
+    }
   });
 };
 
 // Kiểm tra đã gửi follow request chưa
-export const hasFollowRequest = async (followerId, followingId) => {
+export const hasFollowRequest = async (fromUserId, toUserId) => {
   const record = await prisma.followRequest.findFirst({
-    where: { followerId, followingId },
-    select: { followerId: true, followingId: true }
+    where: {
+      fromUserId,
+      toUserId,
+    },
+    select: { id: true }
   });
   return !!record;
 };
 
+
 // Chấp nhận follow request
 export const acceptFollowRequestService = async (followerId, followingId) => {
   // Tạo follow
-  await createFollow(followerId, followingId);
+  const follow = await createFollow(followerId, followingId);
   await incrementFollowerCount(followingId);
 
   // Xóa follow request
   await deleteFollowRequest(followerId, followingId);
 
   // Tạo notification
-  await createNotification({
+  const notification = await createNotification({
     userId: followerId,
     actorId: followingId,
     type: "FOLLOW_ACCEPTED",
@@ -98,6 +118,11 @@ export const acceptFollowRequestService = async (followerId, followingId) => {
 
   // Emit realtime event
   emitFollowAccepted({ id: followingId }, { id: followerId });
+
+  return {
+    follow,
+    notification
+  };
 };
 
 // Từ chối follow request
@@ -107,6 +132,10 @@ export const rejectFollowRequestService = async (followerId, followingId) => {
 
   // Emit realtime event
   emitFollowRejected({ id: followingId }, { id: followerId });
+  return {
+    success: true,
+    message: "Đã từ chối yêu cầu theo dõi."
+  };
 };
 
 // Service function chung cho follow user
@@ -129,7 +158,7 @@ export const followUserService = async (userId, followingId) => {
     }
 
     // Kiểm tra đã gửi follow request chưa (cho tài khoản private)
-    if (targetUser.isPrivate) {
+    if (targetUser.privacySettings.isPrivate) {
       const hasRequest = await hasFollowRequest(userId, Number(followingId));
       if (hasRequest) {
         return { success: false, message: "Bạn đã gửi yêu cầu theo dõi rồi!" };
@@ -137,7 +166,7 @@ export const followUserService = async (userId, followingId) => {
     }
 
     // Kiểm tra tài khoản private
-    if (targetUser.isPrivate) {
+    if (targetUser.privacySettings.isPrivate === true) {
       // Tài khoản private - tạo follow request thay vì follow trực tiếp
       await createFollowRequest(userId, Number(followingId));
 
@@ -178,7 +207,6 @@ export const followUserService = async (userId, followingId) => {
       return {
         success: true,
         message: "Bạn đã theo dõi người dùng!",
-        isPrivate: false
       };
     }
   } catch (error) {

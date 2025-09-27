@@ -79,8 +79,35 @@ export const acceptFollowRequest = async (req, res) => {
     const { requestId } = req.params;
     const userId = req.user.id;
     try {
-        const result = await acceptFollowRequestService(userId, Number(requestId));
-        res.json(result);
+        // Tìm request theo id
+        const request = await prisma.followRequest.findUnique({
+            where: { id: Number(requestId) }
+        });
+
+        if (!request) {
+            return res.status(404).json({
+                success: false,
+                message: "Yêu cầu theo dõi không tồn tại!"
+            });
+        }
+
+        // Check: user hiện tại phải là người được follow
+        if (request.toUserId !== userId) {
+            return res.status(403).json({
+                success: false,
+                message: "Bạn không có quyền chấp nhận yêu cầu này!"
+            });
+        }
+
+        const result = await acceptFollowRequestService(
+            request.fromUserId,
+            request.toUserId
+        );
+        res.json({
+            success: true,
+            message: "Bạn đã chấp nhận yêu cầu theo dõi.",
+            data: result
+        });
     } catch (error) {
         console.error('Error accepting follow request:', error);
         res.status(500).json({
@@ -95,7 +122,28 @@ export const rejectFollowRequest = async (req, res) => {
     const { requestId } = req.params;
     const userId = req.user.id;
     try {
-        const result = await rejectFollowRequestService(userId, Number(requestId));
+        // Tìm request theo id
+        const request = await prisma.followRequest.findUnique({
+            where: { id: Number(requestId) }
+        });
+
+        if (!request) {
+            return res.status(404).json({
+                success: false,
+                message: "Yêu cầu theo dõi không tồn tại!"
+            });
+        }
+
+        // Check: user hiện tại phải là người được follow
+        if (request.toUserId !== userId) {
+            return res.status(403).json({
+                success: false,
+                message: "Bạn không có quyền từ chối yêu cầu này!"
+            });
+        }
+        const result = await rejectFollowRequestService(
+            request.fromUserId,
+            request.toUserId);
         res.json(result);
     }
     catch (error) {
