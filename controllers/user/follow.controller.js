@@ -330,14 +330,13 @@ export const getFollowers = async (req, res) => {
 
 // GET /api/user/follow/:username/status
 export const getFollowStatus = async (req, res) => {
-    const { username } = req.params;
+    const id  = req.resolvedUserId;
     const currentUserId = req.user.id;
 
     try {
         // Tìm user theo username
         const user = await prisma.user.findUnique({
-            where: { username },
-            select: { id: true }
+            where: { id },
         });
 
         if (!user) {
@@ -382,14 +381,13 @@ export const getFollowStatus = async (req, res) => {
 
 // GET /api/user/follow/:username/stats
 export const getFollowStats = async (req, res) => {
-    const { username } = req.params;
+    const id = req.resolvedUserId;
 
     try {
         // Tìm user theo username
         const user = await prisma.user.findUnique({
-            where: { username },
-            select: { id: true }
-        });
+            where: { id },
+            });
 
         if (!user) {
             return res.status(404).json({
@@ -403,11 +401,13 @@ export const getFollowStats = async (req, res) => {
             prisma.follow.count({ where: { followingId: user.id } }),
             prisma.follow.count({ where: { followerId: user.id } })
         ]);
-
+        const postsCount = await prisma.post.count({ where: { userId: user.id } });
+        
         res.json({
             success: true,
             followersCount,
-            followingsCount
+            followingsCount,
+            postsCount
         });
     } catch (error) {
         console.error('Error getting follow stats:', error);
@@ -418,16 +418,15 @@ export const getFollowStats = async (req, res) => {
     }
 };
 
-// GET /api/user/follow/:username/mutual
-export const getMutualFollowers = async (req, res) => {
-    const { username } = req.params;
+// GET /api/user/follow/also-following/:username
+export const getAlsoFollowing = async (req, res) => {
+    const id = req.resolvedUserId;
     const currentUserId = req.user.id;
 
     try {
-        // Tìm user theo username
+        // 1. Lấy user theo username
         const user = await prisma.user.findUnique({
-            where: { username },
-            select: { id: true }
+            where: { id }
         });
 
         if (!user) {
@@ -440,46 +439,45 @@ export const getMutualFollowers = async (req, res) => {
         if (user.id === currentUserId) {
             return res.status(400).json({
                 success: false,
-                message: 'Không thể lấy bạn bè chung với chính mình!'
+                message: 'Không thể kiểm tra với chính mình!'
             });
         }
 
-        // Lấy danh sách followers của user
-        const userFollowers = await prisma.follow.findMany({
-            where: { followingId: user.id },
-            select: { followerId: true }
+        // 2. Lấy danh sách người currentUser đang follow
+        const myFollowings = await prisma.follow.findMany({
+            where: { followerId: currentUserId },
+            select: { followingId: true }
         });
-        const userFollowerIds = userFollowers.map(f => f.followerId);
+        const myFollowingIds = myFollowings.map(f => f.followingId);
 
-        if (userFollowerIds.length === 0) {
+        if (myFollowingIds.length === 0) {
             return res.json({
                 success: true,
-                mutualFollowers: []
+                alsoFollowing: []
             });
         }
 
-        // Tìm những người trong danh sách followers của user mà currentUser cũng đang follow
-        const mutualFollowers = await prisma.follow.findMany({
-            where: {
-                followerId: currentUserId,
-                followingId: { in: userFollowerIds }
-            },
+        // 3. Lấy danh sách followers của target user
+        const targetFollowers = await prisma.follow.findMany({
+            where: { followingId: user.id, followerId: { in: myFollowingIds } },
             select: {
-                following: {
+                follower: {
                     select: { id: true, username: true, fullName: true, avatarUrl: true }
                 }
             }
         });
 
+        // 4. Trả về danh sách người bạn follow cũng follow target
         res.json({
             success: true,
-            mutualFollowers: mutualFollowers.map(f => f.following)
+            alsoFollowing: targetFollowers.map(f => f.follower)
         });
+
     } catch (error) {
-        console.error('Error getting mutual followers:', error);
+        console.error('Error getting also following:', error);
         res.status(500).json({
             success: false,
-            message: 'Lỗi server khi lấy bạn bè chung!'
+            message: 'Lỗi server khi lấy danh sách also following!'
         });
     }
 };
