@@ -1,5 +1,4 @@
 import jwt from 'jsonwebtoken';
-import { log } from 'node:console';
 
 export const authenticate = (req, res, next) => {
 

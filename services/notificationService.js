@@ -1,6 +1,5 @@
 import prisma from "../utils/prisma.js";
 import { getUserById } from "./userService.js";
-import { getIO } from "../config/socket.js";
 import {
   cacheNotification,
   getCachedNotifications,
@@ -15,14 +14,15 @@ export const createNotification = async ({
   actorId,
   type,
   targetType,
-  targetId
+  targetId,
 }) => {
   const now = new Date();
+  const NON_GROUP_TYPES = [
+    "MESSAGE",
+  ];
 
-  // Trường hợp đặc biệt: MESSAGE hoặc FOLLOW_REQUEST
-  if (type === "MESSAGE" || type === "FOLLOW_REQUEST") {
-    const metadata = { senderId: actorId };
-
+  if (NON_GROUP_TYPES.includes(type)) {
+    // Không gom nhóm cho các loại này
     const key = {
       userId_type_targetType_targetId: {
         userId,
@@ -34,19 +34,17 @@ export const createNotification = async ({
 
     const notification = await prisma.notification.upsert({
       where: key,
-      update: { metadata, updatedAt: now },
+      update: { updatedAt: now },
       create: {
         user: { connect: { id: userId } },
         actor: { connect: { id: actorId } },
         type,
         targetType,
         targetId,
-        metadata
       }
     });
 
     await cacheNotification(userId, notification);
-    pushRealtimeNotification(userId, notification);
     return notification;
   }
 
@@ -112,9 +110,8 @@ export const createNotification = async ({
     });
   }
 
-  // Cập nhật cache + realtime
+  // Cập nhật cache 
   await cacheNotification(userId, notification);
-  pushRealtimeNotification(userId, notification);
 
   return notification;
 };
@@ -131,30 +128,6 @@ const getUserName = async (userId) => {
   }
 };
 
-// Hàm gửi thông báo realtime qua Socket.IO
-export const pushRealtimeNotification = (userId, notification) => {
-  try {
-    const io = getIO();
-    if (io) {
-      // Gửi thông báo đến room riêng của user
-      io.to(`user_${userId}`).emit('notification', {
-        id: notification.id,
-        type: notification.type,
-        targetType: notification.targetType,
-        targetId: notification.targetId,
-        metadata: notification.metadata,
-        createdAt: notification.createdAt,
-        updatedAt: notification.updatedAt
-      });
-
-      console.log(`Notification sent to user ${userId}:`, notification.type);
-    } else {
-      console.warn('Socket.IO not initialized, notification not sent');
-    }
-  } catch (error) {
-    console.error('Error sending realtime notification:', error);
-  }
-};
 
 // Hàm lấy thông báo của user (ưu tiên cache Redis)
 export const getUserNotifications = async (userId, page = 1, limit = 20) => {

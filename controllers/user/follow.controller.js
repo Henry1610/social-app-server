@@ -1,24 +1,48 @@
 import { followUserService, unfollowUserService, acceptFollowRequestService, rejectFollowRequestService, removeFollowerService } from "../../services/followService.js";
 import { getFollowersList, getFollowingList } from "../../services/redis/followService.js";
 import prisma from "../../utils/prisma.js";
-
+import { followEvents } from "../../socket/events/followEvents.js";
+import { log } from "console";
 // POST api/user/follows/:username ( nếu là tk private thì tạo follow request)
 export const followUser = async (req, res) => {
-    const id = req.resolvedUserId;
-    const userId = req.user.id;
+  const userId = req.user.id;
+  const followingId = Number(req.resolvedUserId);
 
-    try {
-        const result = await followUserService(userId, Number(id));
+  try {
+    const result = await followUserService(userId, followingId);
+    if (result.success) {
+      const actor = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, username: true, fullName: true, avatarUrl: true }
+      });
+      log(actor);
+      if (result.type === "follow_request") {
+        followEvents.emit("follow_request_sent", {
+          actor,
+          targetUserId: followingId
+        });
+      } else if (result.type === "follow") {
+        followEvents.emit("follow_completed", {
+          actor,
+          targetUserId: followingId
+        });
+      }
 
-        if (result.success) {
-            res.status(201).json(result);
-        } else {
-            res.status(400).json(result);
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: {
+          type: result.type,
+          targetUser: result.targetUser
         }
-    } catch (error) {
-        console.error('Error in followUser controller:', error);
-        res.status(500).json({ success: false, message: "Lỗi server!" });
+      });
     }
+
+    res.status(400).json({ success: false, message: result.message });
+  } catch (error) {
+    console.error("Error in followUser controller:", error);
+    res.status(500).json({ success: false, message: "Lỗi server!" });
+  }
 };
 
 // DELETE api/user/follow/:username

@@ -1,7 +1,7 @@
 import prisma from "../utils/prisma.js";
 import { incrementFollowerCount, decrementFollowerCount } from "./redis/followService.js";
 import { createNotification } from "./notificationService.js";
-import { emitFollow, emitUnfollow, emitFollowRequest, emitFollowAccepted, emitFollowRejected } from "../socket/events/followEvents.js";
+import { emitUnfollow, emitFollowAccepted, emitFollowRejected } from "../socket/events/followEvents.js";
 import { getUserById } from "./userService.js";
 
 // Tạo follow
@@ -141,76 +141,28 @@ export const rejectFollowRequestService = async (followerId, followingId) => {
 // Service function chung cho follow user
 export const followUserService = async (userId, followingId) => {
   try {
-    // Validation
-    if (Number(followingId) === userId) {
-      return { success: false, message: "Không thể follow chính mình!" };
-    }
+    if (userId === followingId) return { success: false, message: "Không thể follow chính mình!" };
+    const targetUser = await getUserById(followingId);
+    if (!targetUser) return { success: false, message: "Người dùng không tồn tại!" };
 
-    // Kiểm tra user có tồn tại không
-    const targetUser = await getUserById(Number(followingId));
-    if (!targetUser) {
-      return { success: false, message: "Người dùng không tồn tại!" };
-    }
-    // Kiểm tra đã follow chưa
-    const alreadyFollowing = await isFollowing(userId, Number(followingId));
-    if (alreadyFollowing) {
-      return { success: false, message: "Bạn đã theo dõi người dùng này!" };
-    }
+    if (await isFollowing(userId, followingId)) return { success: false, message: "Bạn đã theo dõi người dùng này!" };
 
-    // Kiểm tra đã gửi follow request chưa (cho tài khoản private)
     if (targetUser.privacySettings.isPrivate) {
-      const hasRequest = await hasFollowRequest(userId, Number(followingId));
-      if (hasRequest) {
+      if (await hasFollowRequest(userId, followingId)) {
         return { success: false, message: "Bạn đã gửi yêu cầu theo dõi rồi!" };
       }
-    }
 
-    // Kiểm tra tài khoản private
-    if (targetUser.privacySettings.isPrivate === true) {
-      // Tài khoản private - tạo follow request thay vì follow trực tiếp
-      await createFollowRequest(userId, Number(followingId));
+      await createFollowRequest(userId, followingId);
 
-      // Tạo notification cho follow request
-      await createNotification({
-        userId: Number(followingId),
-        actorId: userId,
-        type: "FOLLOW_REQUEST",
-        targetType: "USER",
-        targetId: Number(followingId)
-      });
-
-      // Emit realtime event
-      emitFollowRequest({ id: userId }, { id: Number(followingId) });
-
-      return {
-        success: true,
-        message: "Yêu cầu theo dõi đã được gửi! Chờ người dùng chấp nhận.",
-        isPrivate: true
-      };
+      return { success: true, message: "Yêu cầu theo dõi đã gửi!", type: "follow_request", targetUser };
     } else {
-      // Tài khoản public - follow trực tiếp
-      await createFollow(userId, Number(followingId));
-      await incrementFollowerCount(Number(followingId));
+      await createFollow(userId, followingId);
+      await incrementFollowerCount(followingId);
 
-      // Tạo notification
-      await createNotification({
-        userId: Number(followingId),
-        actorId: userId,
-        type: "FOLLOW",
-        targetType: "USER",
-        targetId: Number(followingId)
-      });
-
-      // Emit realtime event
-      emitFollow({ id: userId }, { id: Number(followingId) });
-
-      return {
-        success: true,
-        message: "Bạn đã theo dõi người dùng!",
-      };
+      return { success: true, message: "Bạn đã theo dõi người dùng!", type: "follow", targetUser };
     }
   } catch (error) {
-    console.error('Error in followUserService:', error);
+    console.error("Error in followUserService:", error);
     return { success: false, message: "Lỗi server khi follow user!" };
   }
 };

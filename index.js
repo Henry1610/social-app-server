@@ -3,7 +3,6 @@ import route from './routes/index.js';
 import http from "http";
 import { initSocket } from './config/socket.js';
 import { registerSocketHandlers } from './socket/index.js'
-
 const app=express();
 const server = http.createServer(app);
 
@@ -13,5 +12,5 @@ app.use(express.json());
 route(app);
 
 server.listen(5000, () => {
-  console.log(`Server running on ${process.env.SERVER_PORT}`);
+  console.log(`Server running on ${process.env.PORT}`);
 });

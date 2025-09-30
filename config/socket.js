@@ -6,18 +6,13 @@ export const initSocket = (httpServer) => {
 	if (ioInstance) return ioInstance
 	ioInstance = new Server(httpServer, {
 		cors: {
-			origin: process.env.CLIENT_URL,
+			origin: "*",
 			methods: ['GET', 'POST'],
       credentials: true
 		}
 	})
 
-	ioInstance.on('connection', (socket) => {
-	
-		console.log('Socket connected', socket.id)
-	})
-
-	return ioInstance
+	return ioInstance;
 }
 
 export const getIO = () => {
