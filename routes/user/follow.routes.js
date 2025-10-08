@@ -21,19 +21,19 @@ import { resolveUser } from '../../middlewares/resolveUser.js';
 
 const router = express.Router();
 
-router.get('/requests', getFollowRequests);//realtime
-router.get('/followings', getMyFollowings);//cache //realtime
-router.get('/followers', getMyFollowers);//cache //realtime
-router.get('/suggestions', getFollowSuggestions);//cache 
-router.post('/requests/:requestId/accept', acceptFollowRequest);//realtime
-router.delete('/requests/:requestId/reject', rejectFollowRequest);//realtime
-router.get('/also-following/:username',resolveUser, getAlsoFollowing);//cache //realtime
-router.post('/:username', resolveUser, followUser);//realtime
-router.get('/:username/stats',resolveUser, getFollowStats);//cache //realtime
-router.get('/:username/status',resolveUser, getFollowStatus);//realtime
-router.delete('/:username', resolveUser, unfollowUser);//realtime
-router.delete('/:username/remove-follower',resolveUser, removeFollower);//realtime
-router.get('/:username/following', resolveUser, getFollowings);//cache //realtime
-router.get('/:username/follower', resolveUser, getFollowers);//cache //realtime
+router.get('/requests', getFollowRequests);
+router.get('/followings', getMyFollowings);//cache 
+router.get('/followers', getMyFollowers);//cache 
+router.get('/suggestions', getFollowSuggestions);
+router.post('/requests/:requestId/accept', acceptFollowRequest);
+router.delete('/requests/:requestId/reject', rejectFollowRequest);
+router.get('/also-following/:username',resolveUser, getAlsoFollowing); 
+router.post('/:username', resolveUser, followUser);
+router.get('/:username/stats',resolveUser, getFollowStats);//cache 
+router.get('/:username/status',resolveUser, getFollowStatus);
+router.delete('/:username', resolveUser, unfollowUser);
+router.delete('/:username/remove-follower',resolveUser, removeFollower);
+router.get('/:username/following', resolveUser, getFollowings);//cache 
+router.get('/:username/follower', resolveUser, getFollowers);//cache 
+
 export default router;
-//thiếu gỡ yêu cầu theo dõi

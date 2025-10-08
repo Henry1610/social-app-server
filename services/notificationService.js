@@ -74,7 +74,7 @@ export const createNotification = async ({
     }
 
     metadata.count = metadata.actorIds.length;
-    metadata.lastActorName = await getUserName(actorId);
+    metadata.lastActorName = await getUserById(actorId);
 
     notification = await prisma.notification.upsert({
       where: key,
@@ -93,7 +93,7 @@ export const createNotification = async ({
     const metadata = {
       actorIds: [actorId],
       count: 1,
-      lastActorName: await getUserName(actorId)
+      lastActorName: await getUserById(actorId)
     };
 
     notification = await prisma.notification.upsert({
@@ -115,19 +115,6 @@ export const createNotification = async ({
 
   return notification;
 };
-
-
-// Hàm lấy tên user theo ID
-const getUserName = async (userId) => {
-  try {
-    const user = await getUserById(userId);
-    return user ? user.name || user.username : 'Unknown User';
-  } catch (error) {
-    console.error('Error getting user name:', error);
-    return 'Unknown User';
-  }
-};
-
 
 // Hàm lấy thông báo của user (ưu tiên cache Redis)
 export const getUserNotifications = async (userId, page = 1, limit = 20) => {

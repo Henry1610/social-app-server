@@ -17,7 +17,7 @@ redisClient.on("error", (err) => {
 
 // Test ping
 redisClient.ping().then((res) => {
-  console.log("Ping response:", res); // phải in ra "PONG"
+  console.log("Ping response:", res); 
 }).catch((err) => {
   console.error("Ping failed:", err);
 });

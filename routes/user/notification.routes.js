@@ -5,12 +5,8 @@ import {
   markAsRead, 
   markAllAsRead 
 } from '../../controllers/user/notification.controller.js';
-import { authenticate } from '../../middlewares/authenticate.js';
 
 const router = express.Router();
-
-// Tất cả routes đều cần xác thực
-router.use(authenticate);
 
 // GET /api/notifications - Lấy danh sách thông báo
 router.get('/', getNotifications);

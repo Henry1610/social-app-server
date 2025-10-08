@@ -21,7 +21,6 @@ export const createFollow = async (followerId, followingId) => {
   });
 };
 
-
 // Xóa follow
 export const deleteFollow = async (followerId, followingId) => {
   return await prisma.follow.delete({
@@ -96,7 +95,7 @@ export const hasFollowRequest = async (fromUserId, toUserId) => {
   });
   return !!record;
 };
-
+//-----------------------------------------------------Main service-----------------------------------------------------
 
 // Chấp nhận follow request
 export const acceptFollowRequestService = async (followerId, followingId) => {
@@ -190,9 +189,9 @@ export const unfollowUserService = async (userId, followingId) => {
   }
 };
 
-export const removeFollowerService = async (userId, followingId) => {
+export const removeFollowerService = async (followerId, followingId) => {
   try {
-    await deleteFollow(userId, Number(followingId));
+    await deleteFollow(followerId, Number(followingId));
     await decrementFollowerCount(Number(followingId));
   } catch (error) {
     console.error('Error in removeFollowerService:', error);
