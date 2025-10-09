@@ -3,6 +3,7 @@ import { getFollowersList, getFollowingList, getFollowStatsService } from "../..
 import prisma from "../../utils/prisma.js";
 import { followEvents } from "../../socket/events/followEvents.js";
 import { log } from "console";
+
 // POST api/user/follows/:username ( nếu là tk private thì tạo follow request)
 export const followUser = async (req, res) => {
     const userId = req.user.id;

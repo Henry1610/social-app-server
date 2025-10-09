@@ -71,8 +71,8 @@ enum NotificationTargetType {
 model User {
   id           Int       @id @default(autoincrement())
   username     String    @unique @db.VarChar(50)
-  email        String    @unique @db.VarChar(100)
-  passwordHash String    @map("password_hash") @db.VarChar(255)
+  email        String?    @unique @db.VarChar(100)
+  passwordHash String?    @map("password_hash") @db.VarChar(255)
   fullName     String?   @map("full_name") @db.VarChar(100)
   bio          String?   @db.Text
   avatarUrl    String?   @map("avatar_url") @db.VarChar(255)
@@ -81,6 +81,10 @@ model User {
   updatedAt    DateTime  @updatedAt @map("updated_at")
   lastSeen     DateTime? @map("last_seen")
   isOnline     Boolean   @default(false) @map("is_online")
+  facebookId   String?   @unique @map("facebook_id")
+  provider     String?   @default("local") @db.VarChar(50)
+  gender       String?   @db.VarChar(10) // male, female, other
+  birthday     DateTime? // Ngày sinh (có thể null)
 
   // Relations (Phase 1 only)
   privacySettings UserPrivacySetting?
