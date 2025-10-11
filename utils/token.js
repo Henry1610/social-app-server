@@ -1,6 +1,5 @@
 import jwt from "jsonwebtoken";
-import prisma from "./prisma.js";
-
+import {redisClient} from "./cache.js";
 export const createRefreshToken = async (user) => {
   const refreshToken = jwt.sign(
     { id: user.id },
@@ -8,14 +7,7 @@ export const createRefreshToken = async (user) => {
     { expiresIn: '7d' }
   );
 
-  // Lưu vào DB
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      refreshToken,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    },
-  });
+  await redisClient.set(`refresh:${user.id}`, refreshToken, "EX", 7 * 24 * 60 * 60);
 
   return refreshToken;
 };

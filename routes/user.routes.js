@@ -13,4 +13,5 @@ router.use('/comments', CommentRoutes);
 router.use('/follows', FollowRoutes);
 router.use('/reactions', ReactionRoutes);
 router.use('/notifications', NotificationRoutes);
+
 export default router;

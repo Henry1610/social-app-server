@@ -1,13 +1,13 @@
 import express from "express";
-import { sendOtp, verifyOtpAndRegister, login, refreshToken, changePassword, requestResetPassword, resetPassword, logout } from "../controllers/authController.js";
-const router = express.Router();
 import passport from "passport";
+import { sendOtp, verifyOtpAndRegister, login, refreshToken, changePassword, requestResetPassword, resetPassword, logout, getMe, facebookCallback, getSessionAuth } from "../controllers/authController.js";
+import { authenticate } from "../middlewares/authenticate.js";
+import { authorize } from "../middlewares/authorize.js";
+const router = express.Router();
 
-router.get("/facebook", passport.authenticate("facebook", { scope: ["email","public_profile","user_birthday","user_gender"] }));
-router.get("/facebook/callback", passport.authenticate("facebook", {
-    failureRedirect: "/login",
-    successRedirect: "/",
-}))
+router.get("/facebook", passport.authenticate("facebook", { scope: ["email", "public_profile", "user_birthday", "user_gender"] }));
+router.get("/facebook/callback", facebookCallback);
+router.get("/session-auth", getSessionAuth);
 router.post("/send-otp", sendOtp);
 router.post("/verify-otp-register", verifyOtpAndRegister);
 router.post("/login", login);
@@ -16,5 +16,6 @@ router.post("/change-password", changePassword);
 router.post('/forgot-password', requestResetPassword);
 router.post('/reset-password', resetPassword);
 router.post('/logout', logout);
+router.get('/me', authenticate,authorize('user'), getMe);
 
 export default router;

@@ -82,7 +82,7 @@ model User {
   lastSeen     DateTime? @map("last_seen")
   isOnline     Boolean   @default(false) @map("is_online")
   facebookId   String?   @unique @map("facebook_id")
-  provider     String?   @default("local") @db.VarChar(50)
+  provider     String?   @default("email") @db.VarChar(50)
   gender       String?   @db.VarChar(10) // male, female, other
   birthday     DateTime? // Ngày sinh (có thể null)
 

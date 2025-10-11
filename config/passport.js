@@ -1,12 +1,12 @@
 import passport from "passport";
 import { Strategy as FacebookStrategy } from "passport-facebook";
 import dotenv from "dotenv";
-import prisma from "../utils/prisma.js"; 
-import { createAccessToken, createRefreshToken } from "../utils/token.js"; 
+import prisma from "../utils/prisma.js";
+import { createAccessToken, createRefreshToken } from "../utils/token.js";
 
 dotenv.config();
 
-const callbackURL = `${process.env.SEVER_URL}${process.env.FACEBOOK_CALLBACK_URL}`;
+const callbackURL = `${process.env.SERVER_URL || 'http://localhost:5000'}${process.env.FACEBOOK_CALLBACK_URL || '/api/auth/facebook/callback'}`;
 
 passport.use(new FacebookStrategy(
   {
@@ -17,36 +17,48 @@ passport.use(new FacebookStrategy(
   },
   async (accessToken, refreshToken, profile, done) => {
     try {
-      // const email = profile.emails?.[0]?.value || null;
-      // const facebookId = profile.id;
+      const facebookId = profile.id;
+      const email = profile.emails?.[0]?.value;
+    
 
-      // // Tìm user đã tồn tại
-      // let user = await prisma.user.findFirst({
-      //   where: {  facebookId },
-      // });
+      let user = await prisma.user.findFirst({
+        where: { facebookId },
+      });
 
-      // // Nếu chưa có -> tạo mới
-      // if (!user) {
-      //   user = await prisma.user.create({
-      //     data: {
-      //       fullname:profile.name,
-      //       email,
-      //       facebookId,
-      //       provider: "facebook",
+      if (!user && email) {
+        // Thử tìm theo email
+        user = await prisma.user.findUnique({ where: { email } });
+        if (user) {
+          user = await prisma.user.update({
+            where: { email },
+            data: { facebookId,provider: "facebook", },
+          });
+        }
+      }
 
-      //     },
-      //   });
-      // }
+      // Nếu chưa có -> tạo mới
+      if (!user) {
+        user = await prisma.user.create({
+          data: {
+            fullName: profile.displayName,
+            email,
+            facebookId,
+            provider: "facebook",
+            username: profile.displayName.replace(/\s+/g, '').toLowerCase(),
+            avatarUrl: profile.photos?.[0]?.value || null,
+            role: "user"
+          },
+        });
+      }
 
-      // // Tạo JWT
-      // const tokens = {
-      //   accessToken: createAccessToken(user),
-      //   refreshToken: createRefreshToken(user),
-      // };
+      // Tạo JWT
+      const tokens = {
+        accessToken: createAccessToken(user),
+        refreshToken: await createRefreshToken(user),
+      };
 
-      // return done(null, { user, tokens });
-            console.log("✅ Profile Facebook:", profile); // để test
-      return done(null, profile);
+      // console.log("✅ Profile Facebook:", profile);
+      return done(null, { user, tokens });
 
     } catch (err) {
       return done(err, null);

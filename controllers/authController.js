@@ -1,6 +1,8 @@
 import bcrypt from "bcrypt";
 import prisma from "../utils/prisma.js";
 import jwt from "jsonwebtoken";
+import passport from "passport";
+import { redisClient } from "../utils/cache.js";
 import { createAccessToken, createRefreshToken, createResetPasswordToken } from "../utils/token.js";
 import { sendEmail } from "../utils/mailer.js";
 import { sendSMS } from "../utils/sms.js"
@@ -67,7 +69,7 @@ export const sendOtp = async (req, res) => {
 export const verifyOtpAndRegister = async (req, res) => {
   try {
     const { username, email, phone, password, fullName, otp } = req.body;
-      
+
     if ((!email && !phone) || (email && phone)) {
       return res.status(400).json({
         message: "Bạn phải nhập 1 trong 2: email hoặc phone",
@@ -76,7 +78,7 @@ export const verifyOtpAndRegister = async (req, res) => {
     // tìm OTP còn hạn và chưa dùng
     const otpRecord = await prisma.otpVerification.findFirst({
       where: {
-        otp:String(otp),
+        otp: String(otp),
         used: false,
         expiresAt: { gt: new Date() },
         OR: [
@@ -142,7 +144,6 @@ export const login = async (req, res) => {
         .json({ message: "Email hoặc số điện thoại là bắt buộc" });
     }
 
-    // Tìm user theo email hoặc phone
     const user = await prisma.user.findFirst({
       where: {
         OR: [
@@ -156,27 +157,33 @@ export const login = async (req, res) => {
       return res.status(400).json({ message: "Người dùng không tồn tại" });
     }
 
-    // Kiểm tra password
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
     if (!isPasswordValid) {
       return res.status(400).json({ message: "Sai mật khẩu" });
     }
 
-    // Tạo JWT
+    // Tạo tokens
     const accessToken = createAccessToken(user);
-    const refreshToken = createRefreshToken(user);
+    const refreshToken = await createRefreshToken(user); 
+
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+
+    // CHỈ TRẢ AT trong response body
     return res.json({
       message: "Đăng nhập thành công",
+      accessToken,
       user: {
         id: user.id,
         username: user.username,
         email: user.email,
         phone: user.phone,
-      },
-      tokens: {
-        accessToken,
-        refreshToken,
-      },
+      }
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -187,32 +194,37 @@ export const login = async (req, res) => {
 // POST /api/auth/refresh-token
 export const refreshToken = async (req, res) => {
   try {
-    const { refreshToken } = req.body;
+    const refreshToken = req.cookies.refreshToken;
     if (!refreshToken) {
       return res.status(400).json({ message: "Không có refresh token!" });
     }
-
-    // tìm trong DB (chỉnh lại field)
-    const storedToken = await prisma.refreshToken.findUnique({
-      where: { refreshToken: refreshToken },  // đổi từ token -> refresh_token
-      include: { user: true },
-    });
-
-    if (!storedToken || storedToken.expiresAt < new Date() || storedToken.revoked) {
+    // tìm token trong DB redis
+    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    const stored = await redisClient.get(`refresh:${decoded.id}`);
+    if (!stored || stored !== refreshToken) {
       return res.status(403).json({ message: "Refresh token không hợp lệ hoặc đã hết hạn!" });
     }
 
-    // verify token
-    jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    //  Lấy lại user từ DB
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, role: true, email: true, username: true }
+    });
 
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
     // tạo access token mới
     const accessToken = jwt.sign(
-      { id: storedToken.userId, role: storedToken.user.role },
+      { id: user.id, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: "15m" }
     );
 
-    return res.json({ accessToken });
+    res.json({
+      success: true,
+      accessToken
+    });
   } catch (error) {
     console.error("Refresh error:", error);
     return res.status(500).json({ message: "Server error" });
@@ -293,13 +305,129 @@ export const resetPassword = async (req, res) => {
 
 // POST /api/auth/logout
 export const logout = async (req, res) => {
-  const { refreshToken } = req.body;
-
-  if (!refreshToken) return res.status(400).json({ message: "Token không được để trống" });
-
-  await prisma.refreshToken.deleteMany({
-    where: { refreshToken },
-  });
-
-  res.json({ message: "Đăng xuất thành công" });
+  try {
+    const refreshToken = req.cookies.refreshToken;
+    if (refreshToken) {
+      // Xóa refresh token khỏi Redis
+      const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+      await redisClient.del(`refresh:${decoded.id}`);
+    }
+    
+    // Xóa cookie
+    res.clearCookie('refreshToken');
+    
+    res.json({ message: "Logout thành công" });
+  } catch (error) {
+    console.error("Logout error:", error);
+    res.status(500).json({ message: "Lỗi Server" });
+  }
 };
+
+// GET /api/auth/me - Lấy thông tin user hiện tại
+export const getMe = async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        fullName: true,
+        bio: true,
+        avatarUrl: true,
+        role: true,
+        gender: true,
+        birthday: true,
+        createdAt: true,
+        provider: true
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json(user);
+  } catch (error) {
+    console.error('Get me error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// GET /api/auth/facebook/callback - Xử lý Facebook OAuth callback
+export const facebookCallback = (req, res, next) => {
+  passport.authenticate("facebook", (err, authData, info) => {
+    if (err) {
+      console.error("Passport error:", err);
+      return res.redirect(`${process.env.CLIENT_URL}/login?error=auth_failed`);
+    }
+    if (!authData.user) {
+      console.log("No user returned from Facebook");
+      return res.redirect(`${process.env.CLIENT_URL}/login?error=no_user`);
+    }
+    try {
+      const { user, tokens } = authData;
+
+      // Lưu vào session tạm (5 phút)
+      req.session.tempAuth = {
+        accessToken: tokens.accessToken,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          fullName: user.fullName,
+          role: user.role,
+          avatarUrl: user.avatarUrl,
+          provider: user.provider
+        }
+      };
+
+      // Lưu Refresh Token vào httpOnly cookie
+      res.cookie('refreshToken', tokens.refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 ngày
+      });
+
+      // Redirect về frontend callback page
+      res.redirect(`${process.env.CLIENT_URL}/auth/callback`);
+
+    } catch (error) {
+      console.error("❌ Token processing error:", error);
+      res.redirect(`${process.env.CLIENT_URL}/login?error=server_error`);
+    }
+  })(req, res, next);
+};
+
+// GET /api/auth/session-auth - Lấy auth data từ session
+export const getSessionAuth = (req, res) => {
+  // Check session tồn tại
+  if (!req.session || !req.session.tempAuth) {
+    console.log("No authentication session found");
+    return res.status(401).json({
+      success: false,
+      message: "No authentication session found. Please login again."
+    });
+  }
+
+  const authData = req.session.tempAuth;
+
+  // Xóa session sau khi lấy (single-use token)
+  req.session.tempAuth = null;
+
+  // Lưu session để đảm bảo xóa
+  req.session.save((err) => {
+    if (err) {
+      console.error("❌ Session save error:", err);
+    }
+  });
+  
+  // Trả về auth data
+  res.json({
+    success: true,
+    accessToken: authData.accessToken,
+    user: authData.user
+  });
+};
+
