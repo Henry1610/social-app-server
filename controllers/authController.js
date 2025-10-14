@@ -34,34 +34,20 @@ export const sendOtp = async (req, res) => {
         return res.status(400).json({ message: "Số điện thoại đã tồn tại" });
       }
     }
-
-    // Sinh OTP
+    // Sinh OTP và lưu Redis TTL (5-15 phút)
     const otp = generateOTP();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-
-    // Lưu vào bảng otp_verifications
-    await prisma.otpVerification.create({
-      data: {
-        email,
-        phone,
-        otp,
-        expiresAt,
-        used: false
-      },
-    });
+    const ttlSec = 5 * 60; 
+    const key = email ? `otp:register-email:${email}` : `otp:phone:${phone}`;
+    await redisClient.set(key, otp, "EX", ttlSec);
 
     // Gửi OTP
-    if (email) {
-      await sendEmail(email, `Mã OTP của bạn là: ${otp}`);
-    }
-    if (phone) {
-      await sendSMS(phone, `Mã OTP của bạn là: ${otp}`);
-    }
+    if (email) await sendEmail(email, `Mã OTP của bạn là: ${otp}`);
+    if (phone) await sendSMS(phone, `Mã OTP của bạn là: ${otp}`);
 
     return res.json({ message: "OTP đã được gửi !" });
   } catch (error) {
     console.error("Send OTP error:", error);
-    return res.status(500).json({ message: "Lỗi Server" });
+    return res.status(500).json({ error: "Gửi OTP thất bại!" });
   }
 };
 
@@ -75,29 +61,14 @@ export const verifyOtpAndRegister = async (req, res) => {
         message: "Bạn phải nhập 1 trong 2: email hoặc phone",
       });
     }
-    // tìm OTP còn hạn và chưa dùng
-    const otpRecord = await prisma.otpVerification.findFirst({
-      where: {
-        otp: String(otp),
-        used: false,
-        expiresAt: { gt: new Date() },
-        OR: [
-          email ? { email } : undefined,
-          phone ? { phone } : undefined,
-        ].filter(Boolean),
-      },
-    });
-
-
-    if (!otpRecord) {
-      return res.status(400).json({ message: "OTP không hợp lệ" });
+    // Lấy OTP từ Redis và so khớp
+    const key = email ? `otp:register-email:${email}` : `otp:phone:${phone}`;
+    const cachedOtp = await redisClient.get(key);
+    if (!cachedOtp || cachedOtp !== String(otp)) {
+      return res.status(400).json({ message: "OTP không hợp lệ hoặc đã hết hạn" });
     }
-
-    // mark OTP là đã dùng
-    await prisma.otpVerification.update({
-      where: { id: otpRecord.id },
-      data: { used: true },
-    });
+    // Xóa OTP ngay sau khi dùng
+    await redisClient.del(key);
 
     // hash password và tạo user
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -128,8 +99,7 @@ export const verifyOtpAndRegister = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ message: "Lỗi Sever" });
+    return res.status(500).json({ error: "Xác thực thất bại!" });
   }
 };
 
@@ -187,7 +157,7 @@ export const login = async (req, res) => {
     });
   } catch (error) {
     console.error("Login error:", error);
-    return res.status(500).json({ message: "Lỗi Server" });
+    return res.status(500).json({ message: "Đăng nhập thất bại!" });
   }
 };
 
@@ -212,7 +182,7 @@ export const refreshToken = async (req, res) => {
     });
 
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(400).json({ message: "Người dùng không tồn tại" });
     }
     // tạo access token mới
     const accessToken = jwt.sign(
@@ -226,8 +196,7 @@ export const refreshToken = async (req, res) => {
       accessToken
     });
   } catch (error) {
-    console.error("Refresh error:", error);
-    return res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ message: "Làm mới token thất bại!" });
   }
 };
 
@@ -268,6 +237,8 @@ export const requestResetPassword = async (req, res) => {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(404).json({ message: "Email không tồn tại" });
 
+    // Rate limit handled by express-rate-limit middleware
+
     const token = createResetPasswordToken(user.id);
     const resetLink = `${process.env.CLIENT_URL}/reset-password?token=${token}`;
 
@@ -275,8 +246,7 @@ export const requestResetPassword = async (req, res) => {
 
     res.json({ message: "Gửi email reset mật khẩu thành công" });
   } catch (error) {
-    console.error("requestResetPassword error:", error);
-    res.status(500).json({ message: "Lỗi server" });
+    return res.status(500).json({ error: "Gửi email reset mật khẩu thất bại!" });
   }
 };
 
@@ -299,7 +269,7 @@ export const resetPassword = async (req, res) => {
 
     res.json({ message: "Reset mật khẩu thành công" });
   } catch (err) {
-    res.status(400).json({ message: "Token không hợp lệ hoặc đã hết hạn" });
+    return res.status(500).json({ error: "Reset mật khẩu thất bại!" });
   }
 };
 
@@ -318,8 +288,7 @@ export const logout = async (req, res) => {
     
     res.json({ message: "Logout thành công" });
   } catch (error) {
-    console.error("Logout error:", error);
-    res.status(500).json({ message: "Lỗi Server" });
+    return res.status(500).json({ error: "Logout thất bại!" });
   }
 };
 
@@ -344,13 +313,13 @@ export const getMe = async (req, res) => {
     });
 
     if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+      return res.status(404).json({ message: 'Không tìm thấy người dùng' });
     }
 
     res.json(user);
   } catch (error) {
     console.error('Get me error:', error);
-    res.status(500).json({ message: 'Server error' });
+    return res.status(500).json({ error: "Lấy thông tin người dùng thất bại!" });
   }
 };
 
@@ -394,7 +363,6 @@ export const facebookCallback = (req, res, next) => {
       res.redirect(`${process.env.CLIENT_URL}/auth/callback`);
 
     } catch (error) {
-      console.error("❌ Token processing error:", error);
       res.redirect(`${process.env.CLIENT_URL}/login?error=server_error`);
     }
   })(req, res, next);
@@ -404,11 +372,7 @@ export const facebookCallback = (req, res, next) => {
 export const getSessionAuth = (req, res) => {
   // Check session tồn tại
   if (!req.session || !req.session.tempAuth) {
-    console.log("No authentication session found");
-    return res.status(401).json({
-      success: false,
-      message: "No authentication session found. Please login again."
-    });
+    return res.status(500).json({ message: "Không tìm thấy session auth!" });
   }
 
   const authData = req.session.tempAuth;
@@ -419,7 +383,7 @@ export const getSessionAuth = (req, res) => {
   // Lưu session để đảm bảo xóa
   req.session.save((err) => {
     if (err) {
-      console.error("❌ Session save error:", err);
+      return res.status(500).json({ message: "Lưu session thất bại!" });
     }
   });
   
