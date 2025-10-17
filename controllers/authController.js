@@ -36,7 +36,7 @@ export const sendOtp = async (req, res) => {
     }
     // Sinh OTP và lưu Redis TTL (5-15 phút)
     const otp = generateOTP();
-    const ttlSec = 5 * 60; 
+    const ttlSec = 5 * 60;
     const key = email ? `otp:register-email:${email}` : `otp:phone:${phone}`;
     await redisClient.set(key, otp, "EX", ttlSec);
 
@@ -70,28 +70,53 @@ export const verifyOtpAndRegister = async (req, res) => {
     // Xóa OTP ngay sau khi dùng
     await redisClient.del(key);
 
-    // hash password và tạo user
+    // hash password và tạo user cùng với privacy settings
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = await prisma.user.create({
-      data: {
-        username,
-        email,
-        phone,
-        passwordHash: hashedPassword,
-        fullName,
-      },
+
+    // Sử dụng transaction để tạo user và privacy settings cùng lúc
+    const result = await prisma.$transaction(async (tx) => {
+      // Tạo user
+      const user = await tx.user.create({
+        data: {
+          username,
+          email,
+          phone,
+          passwordHash: hashedPassword,
+          fullName,
+          avatarUrl: "/images/avatar-IG-mac-dinh-1.jpg"
+        },
+      });
+
+      // Tạo privacy settings mặc định cho user mới
+      await tx.userPrivacySetting.create({
+        data: {
+          userId: user.id,
+          isPrivate: false,
+          whoCanMessage: 'everyone',
+          whoCanTagMe: 'everyone',
+          whoCanFindByUsername: true,
+          showOnlineStatus: true,
+        },
+      });
+
+      return user;
     });
+
+    const user = result;
     const accessToken = createAccessToken(user);
-    const refreshToken = createAccessToken(user);
+    const refreshToken = await createRefreshToken(user);
 
     return res.status(201).json({
       message: "Đăng ký thành công",
       user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        phone: user.phone,
-        fullName: user.fullName,
+        id: userWithPrivacy.id,
+        username: userWithPrivacy.username,
+        email: userWithPrivacy.email,
+        phone: userWithPrivacy.phone,
+        fullName: userWithPrivacy.fullName,
+        avatarUrl: userWithPrivacy.avatarUrl,
+        role: userWithPrivacy.role,
+        privacySettings: userWithPrivacy.privacySettings,
       },
       tokens: {
         accessToken,
@@ -134,13 +159,12 @@ export const login = async (req, res) => {
 
     // Tạo tokens
     const accessToken = createAccessToken(user);
-    const refreshToken = await createRefreshToken(user); 
+    const refreshToken = await createRefreshToken(user);
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-      sameSite: 'strict',
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
 
@@ -151,8 +175,23 @@ export const login = async (req, res) => {
       user: {
         id: user.id,
         username: user.username,
+        fullName: user.fullName,
+        avatarUrl: user.avatarUrl,
+        role: user.role,
+        isOnline: user.isOnline,
+        lastSeen: user.lastSeen,
         email: user.email,
         phone: user.phone,
+        createdAt: user.createdAt,
+        privacySettings: user.privacySettings
+          ? {
+            isPrivate: user.privacySettings.isPrivate,
+            whoCanMessage: user.privacySettings.whoCanMessage,
+            whoCanTagMe: user.privacySettings.whoCanTagMe,
+            whoCanFindByUsername: user.privacySettings.whoCanFindByUsername,
+            showOnlineStatus: user.privacySettings.showOnlineStatus,
+          }
+          : null,
       }
     });
   } catch (error) {
@@ -282,10 +321,14 @@ export const logout = async (req, res) => {
       const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
       await redisClient.del(`refresh:${decoded.id}`);
     }
-    
+
     // Xóa cookie
-    res.clearCookie('refreshToken');
-    
+    res.clearCookie('refreshToken', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    });
+
     res.json({ message: "Logout thành công" });
   } catch (error) {
     return res.status(500).json({ error: "Logout thất bại!" });
@@ -302,20 +345,27 @@ export const getMe = async (req, res) => {
         username: true,
         email: true,
         fullName: true,
-        bio: true,
         avatarUrl: true,
         role: true,
-        gender: true,
-        birthday: true,
         createdAt: true,
-        provider: true
+        provider: true,
+        facebookId: true,
+        privacySettings: {
+          select: {
+            isPrivate: true,
+            whoCanMessage: true,
+            whoCanTagMe: true,
+            whoCanFindByUsername: true,
+            showOnlineStatus: true,
+          },
+        },
       }
     });
 
     if (!user) {
       return res.status(404).json({ message: 'Không tìm thấy người dùng' });
     }
-
+    console.log('Get me user:', user);
     res.json(user);
   } catch (error) {
     console.error('Get me error:', error);
@@ -386,7 +436,7 @@ export const getSessionAuth = (req, res) => {
       return res.status(500).json({ message: "Lưu session thất bại!" });
     }
   });
-  
+
   // Trả về auth data
   res.json({
     success: true,

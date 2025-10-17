@@ -143,10 +143,12 @@ export const followUserService = async (userId, followingId) => {
     if (userId === followingId) return { success: false, message: "Không thể follow chính mình!" };
     const targetUser = await getUserById(followingId);
     if (!targetUser) return { success: false, message: "Người dùng không tồn tại!" };
-
+    
     if (await isFollowing(userId, followingId)) return { success: false, message: "Bạn đã theo dõi người dùng này!" };
 
-    if (targetUser.privacySettings.isPrivate) {
+    const isPrivate = !!targetUser?.privacySettings?.isPrivate;
+    
+    if (isPrivate) {
       if (await hasFollowRequest(userId, followingId)) {
         return { success: false, message: "Bạn đã gửi yêu cầu theo dõi rồi!" };
       }
@@ -178,7 +180,12 @@ export const unfollowUserService = async (userId, followingId) => {
     // Business logic
     await deleteFollow(userId, Number(followingId));
     await decrementFollowerCount(Number(followingId));
-
+    await prisma.followRequest.deleteMany({
+      where: {
+        fromUserId: userId,
+        toUserId: followingId,
+      },
+    });
     // Emit realtime event
     emitUnfollow(userId, Number(followingId));
 

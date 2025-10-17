@@ -14,7 +14,7 @@ followEvents.on("follow_completed", async ({ actor, targetUserId }) => {
     targetId: targetUserId
   });
 
-  console.log("✅ Notification created:", notification);
+  // console.log("✅ Notification created:", notification);
 
   const io = getIO();
   io.to(`user_${targetUserId}`).emit("notification", {

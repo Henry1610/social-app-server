@@ -14,7 +14,8 @@ import {
     getFollowSuggestions,
     getFollowStatus,
     getAlsoFollowing,
-    getFollowStats
+    getFollowStats,
+    cancelFollowRequest
 
 } from '../../controllers/user/follow.controller.js';
 import { resolveUser } from '../../middlewares/resolveUser.js';
@@ -35,5 +36,6 @@ router.delete('/:username', resolveUser, unfollowUser);
 router.delete('/:username/remove-follower',resolveUser, removeFollower);
 router.get('/:username/following', resolveUser, getFollowings);//cache 
 router.get('/:username/follower', resolveUser, getFollowers);//cache 
+router.delete('/:username/cancel-request', resolveUser, cancelFollowRequest);
 
 export default router;

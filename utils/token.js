@@ -3,7 +3,7 @@ import {redisClient} from "./cache.js";
 export const createRefreshToken = async (user) => {
   const refreshToken = jwt.sign(
     { id: user.id },
-    process.env.JWT_SECRET,
+    process.env.JWT_REFRESH_SECRET,
     { expiresIn: '7d' }
   );
 

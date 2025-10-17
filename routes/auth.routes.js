@@ -7,7 +7,7 @@ import { authorize } from "../middlewares/authorize.js";
 const router = express.Router();
 
 
-router.get("/facebook", passport.authenticate("facebook", { scope: ["email", "public_profile", "user_birthday", "user_gender"] }));
+router.get("/facebook", passport.authenticate("facebook", { scope: ["email", "public_profile"] }));
 router.get("/facebook/callback", facebookCallback);
 router.get("/session-auth", getSessionAuth);
 router.post("/send-otp", sendOtpLimiter, sendOtp);

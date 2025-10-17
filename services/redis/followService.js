@@ -1,5 +1,6 @@
 import { redisClient } from "../../utils/cache.js";
 import { getFollowersByUserId, getFollowingByUserId } from "../followService.js";
+import prisma from "../../utils/prisma.js";
 // tăng followers count
 export const incrementFollowerCount = async (userId) => {
   await redisClient.incr(`user:${userId}:followersCount`);
@@ -62,7 +63,7 @@ export const getFollowStatsService = async (userId) => {
   let followerCount = await redisClient.get(followersCountKey);
   if (followerCount === null) {
     followerCount = await prisma.follow.count({ where: { followingId: userId } });
-    await redisClient.setEx(followersCountKey, 120, String(followerCount));
+    await redisClient.set(followersCountKey, String(followerCount), 'EX', 120);
   } else {
     followerCount = parseInt(followerCount, 10);
   }
@@ -71,7 +72,7 @@ export const getFollowStatsService = async (userId) => {
   let followingCount = await redisClient.get(followingCountKey);
   if (followingCount === null) {
     followingCount = await prisma.follow.count({ where: { followerId: userId } });
-    await redisClient.setEx(followingCountKey, 120, String(followingCount));
+    await redisClient.set(followingCountKey, String(followingCount), 'EX', 120);
   } else {
     followingCount = parseInt(followingCount, 10);
   }
@@ -80,7 +81,7 @@ export const getFollowStatsService = async (userId) => {
   let postCount = await redisClient.get(postCountKey);
   if (postCount === null) {
     postCount = await prisma.post.count({ where: { userId } });
-    await redisClient.setEx(postCountKey, 120, String(postCount));
+    await redisClient.set(postCountKey, String(postCount), 'EX', 120);
   } else {
     postCount = parseInt(postCount, 10);
   }

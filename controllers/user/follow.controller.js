@@ -2,7 +2,6 @@ import { followUserService, unfollowUserService, acceptFollowRequestService, rej
 import { getFollowersList, getFollowingList, getFollowStatsService } from "../../services/redis/followService.js";
 import prisma from "../../utils/prisma.js";
 import { followEvents } from "../../socket/events/followEvents.js";
-import { log } from "console";
 
 // POST api/user/follows/:username ( nếu là tk private thì tạo follow request)
 export const followUser = async (req, res) => {
@@ -16,7 +15,6 @@ export const followUser = async (req, res) => {
                 where: { id: userId },
                 select: { id: true, username: true, fullName: true, avatarUrl: true }
             });
-            log(actor);
             if (result.type === "follow_request") {
                 followEvents.emit("follow_request_sent", {
                     actor,
@@ -296,7 +294,8 @@ export const getFollowers = async (req, res) => {
         // Tìm user theo username
         const user = await prisma.user.findUnique({
             where: {
-                id: targetUserId},
+                id: targetUserId
+            },
             select: {
                 id: true,
                 privacySettings: {
@@ -373,11 +372,20 @@ export const getFollowStatus = async (req, res) => {
             },
             select: { followerId: true, followingId: true }
         });
-
+        const followRequest = await prisma.followRequest.findUnique({
+            where: {
+                fromUserId_toUserId: {
+                    fromUserId: currentUserId,
+                    toUserId: user.id,
+                },
+            },
+        });
         res.json({
             success: true,
+            isSelf: false,
+            isPrivate: user.isPrivate,
             isFollowing: !!follow,
-            isSelf: false
+            isPending: !!followRequest,
         });
     } catch (error) {
         console.error('Error getting follow status:', error);
@@ -525,3 +533,45 @@ export const getFollowSuggestions = async (req, res) => {
         });
     }
 };
+
+//DELETE /api/user/follow/:username/cancel-request
+export const cancelFollowRequest = async (req, res) => {
+    try {
+      const currentUserId = req.user.id;
+      const targetUserId = req.resolvedUserId;
+  
+      // Kiểm tra xem có request nào tồn tại không
+      const existingRequest = await prisma.followRequest.findUnique({
+        where: {
+          fromUserId_toUserId: {
+            fromUserId: currentUserId,
+            toUserId: targetUserId,
+          },
+        },
+      });
+  
+      if (!existingRequest) {
+        return res.status(404).json({
+          success: false,
+          message: "Không có yêu cầu theo dõi nào để hủy.",
+        });
+      }
+  
+      // Xóa request
+      await prisma.followRequest.delete({
+        where: { id: existingRequest.id },
+      });
+  
+      return res.json({
+        success: true,
+        message: "Đã hủy yêu cầu theo dõi.",
+      });
+    } catch (error) {
+      console.error("Lỗi khi hủy yêu cầu theo dõi:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Lỗi server khi hủy yêu cầu theo dõi.",
+      });
+    }
+  };
+  

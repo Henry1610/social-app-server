@@ -38,17 +38,37 @@ passport.use(new FacebookStrategy(
 
       // Nếu chưa có -> tạo mới
       if (!user) {
-        user = await prisma.user.create({
-          data: {
-            fullName: profile.displayName,
-            email,
-            facebookId,
-            provider: "facebook",
-            username: profile.displayName.replace(/\s+/g, '').toLowerCase(),
-            avatarUrl: profile.photos?.[0]?.value || null,
-            role: "user"
-          },
+        // Sử dụng transaction để tạo user và privacy settings cùng lúc
+        const result = await prisma.$transaction(async (tx) => {
+          // Tạo user
+          const newUser = await tx.user.create({
+            data: {
+              fullName: profile.displayName,
+              email,
+              facebookId,
+              provider: "facebook",
+              username: profile.displayName.replace(/\s+/g, '').toLowerCase(),
+              avatarUrl: profile.photos?.[0]?.value || null,
+              role: "user"
+            },
+          });
+
+          // Tạo privacy settings mặc định cho user mới
+          await tx.userPrivacySetting.create({
+            data: {
+              userId: newUser.id,
+              isPrivate: false,
+              whoCanMessage: 'everyone',
+              whoCanTagMe: 'everyone',
+              whoCanFindByUsername: true,
+              showOnlineStatus: true,
+            },
+          });
+
+          return newUser;
         });
+
+        user = result;
       }
 
       // Tạo JWT
