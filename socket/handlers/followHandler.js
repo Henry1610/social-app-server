@@ -1,33 +1,53 @@
+import { followEvents } from '../events/followEvents.js';
+import { followUserService } from '../../services/followService.js';
 export const followHandler = (io, socket) => {
 	// Lấy userId từ auth hoặc query
 	const userId = socket.handshake?.auth?.userId || socket.handshake?.query?.userId;
-	
+
 	if (!userId) {
 		socket.emit('follow:error', { message: 'User ID required' });
 		return;
 	}
 
-	// Test connection
-	socket.on('follow:ping', () => {
-		socket.emit('follow:pong', { message: 'Follow handler connected' });
-	});
-
 	// Follow user
 	socket.on('follow:follow', async (data) => {
 		try {
-			const { followingId } = data;
-			
-			if (!followingId) {
-				socket.emit('follow:error', { message: 'Following ID is required' });
+			const { followingUsername } = data;
+			if (!followingUsername) {
+				socket.emit('follow:error', { message: 'Username is required' });
 				return;
 			}
 
-			const { followUserService } = await import('../../services/followService.js');
+			// Lấy userId từ username
+			const targetUser = await prisma.user.findUnique({
+				where: { username: followingUsername },
+				select: { id: true, username: true, fullName: true, avatarUrl: true }
+			});
 
-			const result = await followUserService(userId, Number(followingId));
+			if (!targetUser) {
+				socket.emit('follow:error', { message: 'User not found' });
+				return;
+			}
+
+			const followingId = targetUser.id;
+			const userId = socket.handshake.auth?.userId;
+
+			// Gọi service
+			const result = await followUserService(userId, followingId);
 
 			if (result.success) {
 				socket.emit('follow:success', result);
+
+				const actor = await prisma.user.findUnique({
+					where: { id: userId },
+					select: { id: true, username: true, fullName: true, avatarUrl: true }
+				});
+
+				if (result.type === 'follow') {
+					followEvents.emit('follow_completed', { actor, targetUserId: followingId });
+				} else if (result.type === 'follow_request') {
+					followEvents.emit('follow_request_sent', { actor, targetUserId: followingId });
+				}
 			} else {
 				socket.emit('follow:error', result);
 			}
@@ -38,11 +58,12 @@ export const followHandler = (io, socket) => {
 		}
 	});
 
+
 	// Unfollow user
 	socket.on('follow:unfollow', async (data) => {
 		try {
 			const { followingId } = data;
-			
+
 			if (!followingId) {
 				socket.emit('follow:error', { message: 'Following ID is required' });
 				return;

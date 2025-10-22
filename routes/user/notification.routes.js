@@ -1,23 +1,24 @@
 import express from 'express';
 import { 
   getNotifications, 
-  getUnreadCount, 
   markAsRead, 
-  markAllAsRead 
+  markAllAsRead, 
+  getUnreadCount 
 } from '../../controllers/user/notification.controller.js';
 
 const router = express.Router();
 
-// GET /api/notifications - Lấy danh sách thông báo
+
+// GET /api/user/notifications
 router.get('/', getNotifications);
 
-// GET /api/notifications/unread-count - Lấy số lượng thông báo chưa đọc
+// PUT /api/user/notifications/:id/read
+router.put('/:id/read', markAsRead);
+
+// PUT /api/user/notifications/read-all
+router.put('/read-all', markAllAsRead);
+
+// GET /api/user/notifications/unread-count
 router.get('/unread-count', getUnreadCount);
-
-// PUT /api/notifications/:notificationId/read - Đánh dấu thông báo đã đọc
-router.put('/:notificationId/read', markAsRead);
-
-// PUT /api/notifications/mark-all-read - Đánh dấu tất cả thông báo đã đọc
-router.put('/mark-all-read', markAllAsRead);
 
 export default router;

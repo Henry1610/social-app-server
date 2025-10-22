@@ -365,7 +365,6 @@ export const getMe = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: 'Không tìm thấy người dùng' });
     }
-    console.log('Get me user:', user);
     res.json(user);
   } catch (error) {
     console.error('Get me error:', error);

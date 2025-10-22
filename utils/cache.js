@@ -14,10 +14,3 @@ redisClient.on("connect", () => {
 redisClient.on("error", (err) => {
   console.error("❌ Redis connection error:", err);
 });
-
-// Test ping
-redisClient.ping().then((res) => {
-  console.log("Ping response:", res); 
-}).catch((err) => {
-  console.error("Ping failed:", err);
-});

@@ -97,34 +97,27 @@ export const getFollowRequests = async (req, res) => {
     }
 }
 
-//POST /api/user/follow/requests/:requestId/accept
+//POST /api/user/follow/requests/:username/accept
 export const acceptFollowRequest = async (req, res) => {
-    const { requestId } = req.params;
-    const userId = req.user.id;
-    try {
-        // Tìm request theo id
-        const request = await prisma.followRequest.findUnique({
-            where: { id: Number(requestId) }
+    const targetUserId = Number(req.resolvedUserId);
+    const currentUserId = req.user.id;
+    const existingRequestId = await prisma.followRequest.findUnique({
+        where: { fromUserId_toUserId: {
+            fromUserId: targetUserId,
+            toUserId: req.user.id
+        } },
+        select: { id: true }
+    });
+    if(!existingRequestId){
+        return res.status(404).json({
+            success: false,
+            message: "Yêu cầu theo dõi không tồn tại!"
         });
-
-        if (!request) {
-            return res.status(404).json({
-                success: false,
-                message: "Yêu cầu theo dõi không tồn tại!"
-            });
-        }
-
-        // Check: user hiện tại phải là người được follow
-        if (request.toUserId !== userId) {
-            return res.status(403).json({
-                success: false,
-                message: "Bạn không có quyền chấp nhận yêu cầu này!"
-            });
-        }
-
+    }
+    try {
         const result = await acceptFollowRequestService(
-            request.fromUserId,
-            request.toUserId
+            currentUserId,
+            targetUserId
         );
         res.json({
             success: true,
@@ -140,33 +133,34 @@ export const acceptFollowRequest = async (req, res) => {
     }
 }
 
-//DELETE /api/user/follow/requests/:requestId/reject
+//DELETE /api/user/follow/requests/:username/reject
 export const rejectFollowRequest = async (req, res) => {
-    const { requestId } = req.params;
-    const userId = req.user.id;
+    const targetUserId = Number(req.resolvedUserId);
+    const currentUserId = req.user.id;
+    
     try {
-        // Tìm request theo id
-        const request = await prisma.followRequest.findUnique({
-            where: { id: Number(requestId) }
+        // Kiểm tra xem có follow request không
+        const existingRequestId = await prisma.followRequest.findUnique({
+            where: { 
+                fromUserId_toUserId: {
+                    fromUserId: targetUserId,
+                    toUserId: currentUserId
+                } 
+            },
+            select: { id: true }
         });
-
-        if (!request) {
+        
+        if(!existingRequestId){
             return res.status(404).json({
                 success: false,
                 message: "Yêu cầu theo dõi không tồn tại!"
             });
         }
-
-        // Check: user hiện tại phải là người được follow
-        if (request.toUserId !== userId) {
-            return res.status(403).json({
-                success: false,
-                message: "Bạn không có quyền từ chối yêu cầu này!"
-            });
-        }
+        
+        // Xử lý từ chối follow request
         const result = await rejectFollowRequestService(
-            request.fromUserId,
-            request.toUserId);
+            targetUserId,//targetUserId là user được từ chối
+            currentUserId);
         res.json(result);
     }
     catch (error) {
@@ -261,12 +255,25 @@ export const getFollowings = async (req, res) => {
             });
         }
 
-        // Nếu tài khoản private và không phải chính chủ → chặn
-        if (user.privacySettings?.isPrivate && user.id !== currentUserId) {
-            return res.status(403).json({
-                success: false,
-                message: 'Tài khoản này là private. Bạn không thể xem danh sách following!'
+        // Kiểm tra quyền xem following
+        if (user.id !== currentUserId) {
+            // Kiểm tra xem current user có đang follow target user không
+            const isFollowing = await prisma.follow.findUnique({
+                where: {
+                    followerId_followingId: {
+                        followerId: currentUserId,
+                        followingId: targetUserId
+                    }
+                }
             });
+
+            // Nếu tài khoản private và current user không follow target user → chặn
+            if (user.privacySettings?.isPrivate && !isFollowing) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Tài khoản này là private. Bạn cần theo dõi để xem danh sách following!'
+                });
+            }
         }
 
         // Lấy danh sách followings (những người mà user đang theo dõi)
@@ -311,12 +318,25 @@ export const getFollowers = async (req, res) => {
             });
         }
 
-        // Nếu tài khoản private và không phải chính chủ → chặn
-        if (user.privacySettings?.isPrivate && user.id !== currentUserId) {
-            return res.status(403).json({
-                success: false,
-                message: 'Tài khoản này là private. Bạn không thể xem danh sách followers!'
+        // Kiểm tra quyền xem followers
+        if (user.id !== currentUserId) {
+            // Kiểm tra xem current user có đang follow target user không
+            const isFollowing = await prisma.follow.findUnique({
+                where: {
+                    followerId_followingId: {
+                        followerId: currentUserId,
+                        followingId: targetUserId
+                    }
+                }
             });
+
+            // Nếu tài khoản private và current user không follow target user → chặn
+            if (user.privacySettings?.isPrivate && !isFollowing) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Tài khoản này là private. Bạn cần theo dõi để xem danh sách followers!'
+                });
+            }
         }
 
         // Lấy danh sách followers (những người đang theo dõi user này)
@@ -355,10 +375,28 @@ export const getFollowStatus = async (req, res) => {
         }
 
         if (user.id === currentUserId) {
+            // Nếu đang xem profile của chính mình, kiểm tra xem có follow requests đến không
+            const incomingFollowRequests = await prisma.followRequest.findMany({
+                where: {
+                    toUserId: currentUserId
+                },
+                include: {
+                    fromUser: {
+                        select: {
+                            id: true,
+                            username: true,
+                            fullName: true,
+                            avatarUrl: true
+                        }
+                    }
+                }
+            });
+            
             return res.json({
                 success: true,
                 isFollowing: false,
-                isSelf: true
+                isSelf: true,
+                incomingRequests: incomingFollowRequests
             });
         }
 
@@ -372,6 +410,17 @@ export const getFollowStatus = async (req, res) => {
             },
             select: { followerId: true, followingId: true }
         });
+        
+        // Kiểm tra xem user đang xem có đang theo dõi user hiện tại không
+        const isFollower = await prisma.follow.findUnique({
+            where: {
+                followerId_followingId: {
+                    followerId: user.id,
+                    followingId: currentUserId
+                }
+            }
+        });
+        
         const followRequest = await prisma.followRequest.findUnique({
             where: {
                 fromUserId_toUserId: {
@@ -380,12 +429,25 @@ export const getFollowStatus = async (req, res) => {
                 },
             },
         });
+        
+        // Kiểm tra xem user đang xem có gửi follow request đến user hiện tại không
+        const incomingFollowRequest = await prisma.followRequest.findUnique({
+            where: {
+                fromUserId_toUserId: {
+                    fromUserId: user.id,
+                    toUserId: currentUserId,
+                },
+            },
+        });
+        
         res.json({
             success: true,
             isSelf: false,
             isPrivate: user.isPrivate,
             isFollowing: !!follow,
             isPending: !!followRequest,
+            isFollower: !!isFollower,
+            hasIncomingRequest: !!incomingFollowRequest
         });
     } catch (error) {
         console.error('Error getting follow status:', error);

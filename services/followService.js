@@ -1,9 +1,9 @@
 import prisma from "../utils/prisma.js";
-import { incrementFollowerCount, decrementFollowerCount } from "./redis/followService.js";
-import { createNotification } from "./notificationService.js";
-import { emitUnfollow, emitFollowAccepted, emitFollowRejected } from "../socket/events/followEvents.js";
+import { 
+  updateFollowCacheAtomic
+} from "./redis/followService.js";
 import { getUserById } from "./userService.js";
-
+import { followEvents } from "../socket/events/followEvents.js";
 // Tạo follow
 export const createFollow = async (followerId, followingId) => {
   return await prisma.follow.upsert({
@@ -98,39 +98,39 @@ export const hasFollowRequest = async (fromUserId, toUserId) => {
 //-----------------------------------------------------Main service-----------------------------------------------------
 
 // Chấp nhận follow request
-export const acceptFollowRequestService = async (followerId, followingId) => {
+export const acceptFollowRequestService = async (currentUserId, targetUserId) => {
   // Tạo follow
-  const follow = await createFollow(followerId, followingId);
-  await incrementFollowerCount(followingId);
-
+  const follow = await createFollow(targetUserId, currentUserId);
+  // Sử dụng atomic operation để cập nhật cache và count cùng lúc
+  await updateFollowCacheAtomic(targetUserId, currentUserId, 'follow');
   // Xóa follow request
-  await deleteFollowRequest(followerId, followingId);
-
-  // Tạo notification
-  const notification = await createNotification({
-    userId: followerId,
-    actorId: followingId,
-    type: "FOLLOW_ACCEPTED",
-    targetType: "USER",
-    targetId: followerId
+  await deleteFollowRequest(targetUserId, currentUserId);
+  const actor = await prisma.user.findUnique({
+    where: { id: currentUserId },
+    select: { id: true, username: true, fullName: true, avatarUrl: true }
   });
-
   // Emit realtime event
-  emitFollowAccepted({ id: followingId }, { id: followerId });
-
+  followEvents.emit("follow_request_accepted", { actor, targetUserId });
   return {
-    follow,
-    notification
+    success: true,
+    message: "Đã chấp nhận yêu cầu theo dõi.",
   };
 };
 
 // Từ chối follow request
-export const rejectFollowRequestService = async (followerId, followingId) => {
+export const rejectFollowRequestService = async (targetUserId, currentUserId) => {
   // Xóa follow request
-  await deleteFollowRequest(followerId, followingId);
-
+  await deleteFollowRequest(targetUserId, currentUserId);
+  
+  // Lấy thông tin actor (người từ chối)
+  const actor = await prisma.user.findUnique({
+    where: { id: currentUserId },
+    select: { id: true, username: true, fullName: true, avatarUrl: true }
+  });
+  
   // Emit realtime event
-  emitFollowRejected({ id: followingId }, { id: followerId });
+  followEvents.emit("follow_request_rejected", { actor, targetUserId });
+  
   return {
     success: true,
     message: "Đã từ chối yêu cầu theo dõi."
@@ -143,11 +143,11 @@ export const followUserService = async (userId, followingId) => {
     if (userId === followingId) return { success: false, message: "Không thể follow chính mình!" };
     const targetUser = await getUserById(followingId);
     if (!targetUser) return { success: false, message: "Người dùng không tồn tại!" };
-    
+
     if (await isFollowing(userId, followingId)) return { success: false, message: "Bạn đã theo dõi người dùng này!" };
 
     const isPrivate = !!targetUser?.privacySettings?.isPrivate;
-    
+
     if (isPrivate) {
       if (await hasFollowRequest(userId, followingId)) {
         return { success: false, message: "Bạn đã gửi yêu cầu theo dõi rồi!" };
@@ -158,7 +158,8 @@ export const followUserService = async (userId, followingId) => {
       return { success: true, message: "Yêu cầu theo dõi đã gửi!", type: "follow_request", targetUser };
     } else {
       await createFollow(userId, followingId);
-      await incrementFollowerCount(followingId);
+      // Sử dụng atomic operation để cập nhật cache và count cùng lúc
+      await updateFollowCacheAtomic(userId, followingId, 'follow');
 
       return { success: true, message: "Bạn đã theo dõi người dùng!", type: "follow", targetUser };
     }
@@ -179,15 +180,15 @@ export const unfollowUserService = async (userId, followingId) => {
 
     // Business logic
     await deleteFollow(userId, Number(followingId));
-    await decrementFollowerCount(Number(followingId));
+    // Sử dụng atomic operation để cập nhật cache và count cùng lúc
+    await updateFollowCacheAtomic(userId, Number(followingId), 'unfollow');
+
     await prisma.followRequest.deleteMany({
       where: {
         fromUserId: userId,
         toUserId: followingId,
       },
     });
-    // Emit realtime event
-    emitUnfollow(userId, Number(followingId));
 
     return { success: true, message: "Bạn đã hủy theo dõi người dùng!" };
   } catch (error) {
@@ -198,8 +199,23 @@ export const unfollowUserService = async (userId, followingId) => {
 
 export const removeFollowerService = async (followerId, followingId) => {
   try {
+    if (followerId === followingId) return { success: false, message: "Không thể xóa chính mình!" };
+    
+    // Kiểm tra người dùng có tồn tại không
+    const targetUser = await getUserById(followingId);
+    if (!targetUser) return { success: false, message: "Người dùng không tồn tại!" };
+    
+    // Kiểm tra đã follow chưa
+    const alreadyFollowing = await isFollowing(followerId, Number(followingId));
+    if (!alreadyFollowing) {
+      return { success: false, message: "Người dùng này chưa theo dõi bạn!" };
+    }
+
     await deleteFollow(followerId, Number(followingId));
-    await decrementFollowerCount(Number(followingId));
+    // Sử dụng atomic operation để cập nhật cache và count cùng lúc
+    await updateFollowCacheAtomic(followerId, Number(followingId), 'unfollow');
+
+    return { success: true, message: "Đã xóa người theo dõi!" };
   } catch (error) {
     console.error('Error in removeFollowerService:', error);
     return { success: false, message: "Lỗi server khi xóa người theo dõi!" };

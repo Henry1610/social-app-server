@@ -6,11 +6,6 @@ export const notificationHandler = (io, socket) => {
 		console.log(`User ${userId} joined notification room`)
 	}
 
-	// Test connection
-	socket.on('notif:ping', () => {
-		socket.emit('notif:pong')
-	})
-
 	// Join notification room manually
 	socket.on('notif:join', (data) => {
 		const { userId: targetUserId } = data

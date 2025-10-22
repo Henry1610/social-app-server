@@ -43,5 +43,4 @@ app.use(express.json());
 route(app);
 
 server.listen(5000, () => {
-  console.log(`Server running on ${process.env.PORT}`);
 });

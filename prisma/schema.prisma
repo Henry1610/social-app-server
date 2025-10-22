@@ -48,25 +48,30 @@ enum TargetType {
   REEL
 }
 
-enum NotificationType {
-  COMMENT
+  enum NotificationType {
+  // Follow related
   FOLLOW
-  MENTION
-  REPOST
-  REPLY
   FOLLOW_REQUEST
   FOLLOW_ACCEPTED
   FOLLOW_REJECTED
-  REACTION
+  
+  // Interaction on posts/comments
+  COMMENT           // Bạn được comment
+  REPLY             // Comment của bạn được reply
+  MENTION           // Bạn được mention
+  REACTION          // Bạn được like/emoji react
+  REPOST            // Bạn được repost
+  
+  // Direct messaging
+  MESSAGE           // Tin nhắn mới
 }
 
-enum NotificationTargetType {
-  POST
-  COMMENT
-  USER
-  STORY
-  MESSAGE
-}
+  enum NotificationTargetType {
+    POST
+    COMMENT
+    USER
+    MESSAGE
+  }
 
 model User {
   id           Int       @id @default(autoincrement())
@@ -145,7 +150,6 @@ model UserPrivacySetting {
   @@index([showOnlineStatus])
   @@map("user_privacy_settings")
 }
-
 
 model PasswordReset {
   id         Int      @id @default(autoincrement())
@@ -388,7 +392,7 @@ model Notification {
   actorId    Int                      @map("actor_id")     // Người thực hiện action
   type       NotificationType
   targetType NotificationTargetType   @map("target_type")
-  targetId   Int                      @map("target_id")
+  targetId   Int?                      @map("target_id")
   isRead     Boolean                  @default(false) @map("is_read")
   createdAt  DateTime                 @default(now()) @map("created_at")
   updatedAt  DateTime                 @default(now()) @map("updated_at")
@@ -416,11 +420,13 @@ model Notification {
   @@index([userId, createdAt])    // Query timeline
 
   // Unique constraints
-  // 1 notification duy nhất cho Like hoặc Follow
-  @@unique([userId, type, targetType, targetId], map: "unique_like_follow") 
+   // Gom theo type nếu không có targetId
+  @@unique([userId, type, targetType], map: "unique_by_type")
+  // Gom theo target nếu có targetId
+  @@unique([userId, type, targetType, targetId], map: "unique_by_target")
+
   @@map("notifications")
 }
-
 model NotificationTemplate {
   id        Int                     @id @default(autoincrement())
   type      NotificationType        @unique
@@ -439,7 +445,6 @@ model NotificationTemplate {
   @@index([isActive])
   @@map("notification_templates")
 }
-
 model Follow {
   followerId  Int   @map("follower_id")     // id của người đi follow
   followingId Int   @map("following_id")    // id của người bị follow

@@ -21,14 +21,14 @@ export const cacheNotification = async (userId, notification) => {
 
     // Lưu thông báo mới nhất vào đầu list
     await redisClient.lpush(key, JSON.stringify(notificationData));
-    
+
     // Giới hạn số lượng thông báo trong cache (100 thông báo gần nhất)
     await redisClient.ltrim(key, 0, 99);
-    
+
     // Tăng số lượng thông báo chưa đọc
-    if (!notification.readAt) {
-      await redisClient.incr(UNREAD_COUNT_KEY(userId));
-    }
+    // if (!notification.readAt) {
+    //   await redisClient.incr(UNREAD_COUNT_KEY(userId));
+    // }
 
     return true;
   } catch (error) {
@@ -78,19 +78,19 @@ export const markNotificationAsReadInCache = async (userId, notificationId) => {
   try {
     const key = NOTIFICATION_KEY(userId);
     const notifications = await redisClient.lrange(key, 0, -1);
-    
+
     for (let i = 0; i < notifications.length; i++) {
       const notification = JSON.parse(notifications[i]);
       if (notification.id === notificationId && !notification.readAt) {
         notification.readAt = new Date().toISOString();
         await redisClient.lset(key, i, JSON.stringify(notification));
-        
+
         // Giảm số lượng thông báo chưa đọc
         await redisClient.decr(UNREAD_COUNT_KEY(userId));
         return true;
       }
     }
-    
+
     return false;
   } catch (error) {
     console.error('Error marking notification as read in cache:', error);
@@ -103,7 +103,7 @@ export const markAllNotificationsAsReadInCache = async (userId) => {
   try {
     const key = NOTIFICATION_KEY(userId);
     const notifications = await redisClient.lrange(key, 0, -1);
-    
+
     const updatedNotifications = notifications.map(notif => {
       const notification = JSON.parse(notif);
       if (!notification.readAt) {
@@ -119,7 +119,7 @@ export const markAllNotificationsAsReadInCache = async (userId) => {
 
     // Reset số lượng thông báo chưa đọc về 0
     await redisClient.set(UNREAD_COUNT_KEY(userId), 0);
-    
+
     return true;
   } catch (error) {
     console.error('Error marking all notifications as read in cache:', error);
@@ -132,10 +132,10 @@ export const clearNotificationCache = async (userId) => {
   try {
     const key = NOTIFICATION_KEY(userId);
     const unreadKey = UNREAD_COUNT_KEY(userId);
-    
+
     await redisClient.del(key);
     await redisClient.del(unreadKey);
-    
+
     return true;
   } catch (error) {
     console.error('Error clearing notification cache:', error);

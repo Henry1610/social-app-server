@@ -5,9 +5,11 @@ import {
   getCachedNotifications,
   getUnreadCount,
   markNotificationAsReadInCache,
-  markAllNotificationsAsReadInCache
+  markAllNotificationsAsReadInCache,
+  clearNotificationCache
 } from "./redis/notificationService.js";
-const TIME_WINDOW = 5 * 60 * 1000;
+import { formatNotificationMessage } from "../utils/notificationText.js";
+const TIME_WINDOW = 1 * 60 * 1000; // 5 phút
 
 export const createNotification = async ({
   userId,
@@ -17,104 +19,144 @@ export const createNotification = async ({
   targetId,
 }) => {
   const now = new Date();
-  const NON_GROUP_TYPES = [
-    "MESSAGE",
-  ];
+
+  // Các loại thông báo không gom nhóm
+  const NON_GROUP_TYPES = ["MESSAGE"];
+
+  // Các loại thông báo gom nhóm theo target (bài viết, user, etc.)
+  const GROUP_BY_TARGET_TYPES = ["LIKE", "COMMENT", "REPOST"];
+
+  // Các loại thông báo gom nhóm theo loại (không phân biệt target)
+  const GROUP_BY_TYPE_TYPES = ["FOLLOW", "FOLLOW_REQUEST", "FOLLOW_ACCEPTED", "FOLLOW_REJECTED",];
 
   if (NON_GROUP_TYPES.includes(type)) {
-    // Không gom nhóm cho các loại này
-    const key = {
-      userId_type_targetType_targetId: {
-        userId,
-        type,
-        targetType,
-        targetId
-      }
-    };
-
-    const notification = await prisma.notification.upsert({
-      where: key,
-      update: { updatedAt: now },
-      create: {
-        user: { connect: { id: userId } },
-        actor: { connect: { id: actorId } },
-        type,
-        targetType,
-        targetId,
-      }
-    });
-
-    await cacheNotification(userId, notification);
-    return notification;
-  }
-
-  // Gom nhóm cho các loại còn lại
-  const key = {
-    userId_type_targetType_targetId: {
+    // Không gom nhóm - tạo thông báo riêng biệt
+    return await createSingleNotification({
       userId,
+      actorId,
       type,
       targetType,
-      targetId
-    }
-  };
-
-  // Thử tìm notification hiện có
-  let notification = await prisma.notification.findUnique({ where: key });
-
-  if (
-    notification &&
-    now.getTime() - notification.updatedAt.getTime() < TIME_WINDOW
-  ) {
-    // Nếu trong TIME_WINDOW → gom vào notification cũ
-    const metadata = notification.metadata || {};
-    metadata.actorIds = metadata.actorIds || [];
-
-    if (!metadata.actorIds.includes(actorId)) {
-      metadata.actorIds.push(actorId);
-    }
-
-    metadata.count = metadata.actorIds.length;
-    metadata.lastActorName = await getUserById(actorId);
-
-    notification = await prisma.notification.upsert({
-      where: key,
-      update: { metadata, updatedAt: now },
-      create: {
-        user: { connect: { id: userId } },
-        actor: { connect: { id: actorId } },
-        type,
-        targetType,
-        targetId,
-        metadata
-      }
-    });
-  } else {
-    // Quá hạn TIME_WINDOW hoặc chưa có notification → tạo mới
-    const metadata = {
-      actorIds: [actorId],
-      count: 1,
-      lastActorName: await getUserById(actorId)
-    };
-
-    notification = await prisma.notification.upsert({
-      where: key,
-      update: { metadata, updatedAt: now },
-      create: {
-        user: { connect: { id: userId } },
-        actor: { connect: { id: actorId } },
-        type,
-        targetType,
-        targetId,
-        metadata
-      }
+      targetId,
+      now
     });
   }
 
-  // Cập nhật cache 
-  await cacheNotification(userId, notification);
+  if (GROUP_BY_TARGET_TYPES.includes(type)) {
+    // Gom nhóm theo target (bài viết, comment, etc.)
+    return await createGroupedNotification({
+      userId,
+      actorId,
+      type,
+      targetType,
+      targetId,
+      now
+    });
+  }
 
+  if (GROUP_BY_TYPE_TYPES.includes(type)) {
+    // Gom nhóm theo loại (follow, follow_request)
+    return await createGroupedNotification({
+      userId,
+      actorId,
+      type,
+      targetType,
+      now
+    });
+  }
+
+  // Mặc định: tạo thông báo đơn lẻ
+  return await createSingleNotification({
+    userId,
+    actorId,
+    type,
+    targetType,
+    targetId,
+    now
+  });
+};
+
+// Tạo thông báo đơn lẻ
+const createSingleNotification = async ({ userId, actorId, type, targetType, targetId, now }) => {
+  const notification = await prisma.notification.create({
+    data: {
+      user: { connect: { id: userId } },
+      actor: { connect: { id: actorId } },
+      type,
+      targetType,
+      targetId,
+    }
+  });
+
+  await cacheNotification(userId, notification);
   return notification;
 };
+
+const createGroupedNotification = async ({ userId, actorId, type, targetType, targetId, now }) => {
+  const where = targetId != null
+    ? { userId_type_targetType_targetId: { userId, type, targetType, targetId } }
+    : { userId_type_targetType: { userId, type, targetType } };
+
+  const existing = await prisma.notification.findUnique({ where });
+
+  if (existing) {
+    const isExpired = now - existing.updatedAt > TIME_WINDOW;
+    const metadata = existing.metadata || {};
+    metadata.actorIds = metadata.actorIds || [];
+
+    if (!isExpired) {
+      if (!metadata.actorIds.includes(actorId)) {
+        metadata.actorIds.push(actorId);
+        metadata.count = metadata.actorIds.length;
+        metadata.lastActorName = await getUserById(actorId);
+
+        const updated = await prisma.notification.update({
+          where: { id: existing.id },
+          data: { metadata, updatedAt: now }
+        });
+
+        await cacheNotification(userId, updated);
+        return updated;
+      }
+      return existing;
+    }
+
+    if (metadata.actorIds.length > 1) {
+      metadata.actorIds = metadata.actorIds.filter(id => id !== actorId);
+      metadata.count = metadata.actorIds.length;
+
+      const updated = await prisma.notification.update({
+        where: { id: existing.id },
+        data: { metadata }
+      });
+      await cacheNotification(userId, updated);
+    } else {
+      await prisma.notification.delete({ where: { id: existing.id } });
+      await clearNotificationCache(userId);
+    }
+  }
+
+  const metadata = {
+    actorIds: [actorId],
+    count: 1,
+    lastActorName: await getUserById(actorId)
+  };
+
+  const notification = await prisma.notification.create({
+    data: {
+      user: { connect: { id: userId } },
+      actor: { connect: { id: actorId } },
+      type,
+      targetType,
+      targetId: targetId ?? null,
+      metadata,
+      updatedAt: now
+    }
+  });
+
+  await cacheNotification(userId, notification);
+  return notification;
+};
+
 
 // Hàm lấy thông báo của user (ưu tiên cache Redis)
 export const getUserNotifications = async (userId, page = 1, limit = 20) => {
@@ -123,7 +165,19 @@ export const getUserNotifications = async (userId, page = 1, limit = 20) => {
     const cachedResult = await getCachedNotifications(userId, page, limit);
 
     if (cachedResult.notifications.length > 0) {
-      return cachedResult;
+      // Format luôn cache
+      const formattedCached = cachedResult.notifications.map(n => ({
+        ...n,
+        message: formatNotificationMessage({
+          ...n,
+          actor: n.actor || n.metadata?.lastActorName,
+        }),
+      }));
+
+      return {
+        ...cachedResult,
+        notifications: formattedCached,
+      };
     }
 
     // Nếu cache không có, lấy từ database
@@ -139,9 +193,12 @@ export const getUserNotifications = async (userId, page = 1, limit = 20) => {
     const total = await prisma.notification.count({
       where: { userId }
     });
+    const formatted = notifications.map(n => ({
 
+      message: formatNotificationMessage(n),
+    }));
     const result = {
-      notifications,
+      notifications: formatted,
       pagination: {
         page,
         limit,
