@@ -3,13 +3,10 @@ import { getUserById } from "./userService.js";
 import {
   cacheNotification,
   getCachedNotifications,
-  getUnreadCount,
-  markNotificationAsReadInCache,
-  markAllNotificationsAsReadInCache,
   clearNotificationCache
 } from "./redis/notificationService.js";
 import { formatNotificationMessage } from "../utils/notificationText.js";
-const TIME_WINDOW = 1 * 60 * 1000; // 5 phút
+const TIME_WINDOW = 5 * 60 * 1000; // 5 phút
 
 export const createNotification = async ({
   userId,
@@ -157,7 +154,6 @@ const createGroupedNotification = async ({ userId, actorId, type, targetType, ta
   return notification;
 };
 
-
 // Hàm lấy thông báo của user (ưu tiên cache Redis)
 export const getUserNotifications = async (userId, page = 1, limit = 20) => {
   try {
@@ -221,74 +217,3 @@ export const getUserNotifications = async (userId, page = 1, limit = 20) => {
   }
 };
 
-// Hàm đánh dấu thông báo đã đọc
-export const markNotificationAsRead = async (notificationId, userId) => {
-  try {
-    const notification = await prisma.notification.updateMany({
-      where: {
-        id: notificationId,
-        userId
-      },
-      data: {
-        readAt: new Date()
-      }
-    });
-
-    // Cập nhật cache
-    if (notification.count > 0) {
-      await markNotificationAsReadInCache(userId, notificationId);
-    }
-
-    return notification.count > 0;
-  } catch (error) {
-    console.error('Error marking notification as read:', error);
-    throw error;
-  }
-};
-
-// Hàm đánh dấu tất cả thông báo đã đọc
-export const markAllNotificationsAsRead = async (userId) => {
-  try {
-    await prisma.notification.updateMany({
-      where: {
-        userId,
-        readAt: null
-      },
-      data: {
-        readAt: new Date()
-      }
-    });
-
-    // Cập nhật cache
-    await markAllNotificationsAsReadInCache(userId);
-
-    return true;
-  } catch (error) {
-    console.error('Error marking all notifications as read:', error);
-    throw error;
-  }
-};
-
-// Hàm lấy số lượng thông báo chưa đọc
-export const getUnreadNotificationCount = async (userId) => {
-  try {
-    // Thử lấy từ cache trước
-    const cachedCount = await getUnreadCount(userId);
-    if (cachedCount > 0) {
-      return cachedCount;
-    }
-
-    // Nếu cache không có, lấy từ database
-    const count = await prisma.notification.count({
-      where: {
-        userId,
-        readAt: null
-      }
-    });
-
-    return count;
-  } catch (error) {
-    console.error('Error getting unread notification count:', error);
-    return 0;
-  }
-};

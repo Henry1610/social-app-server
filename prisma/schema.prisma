@@ -71,6 +71,7 @@ enum TargetType {
     COMMENT
     USER
     MESSAGE
+    CONVERSATION  
   }
 
 model User {
@@ -103,10 +104,20 @@ model User {
   followers Follow[] @relation("Followers") // user này được người khác follow
   followRequestsSent     FollowRequest[] @relation("FollowRequestsSent")
   followRequestsReceived FollowRequest[] @relation("FollowRequestsReceived")
+  // Chat relations
+  sentMessages          Message[]              @relation("ChatMessagesSent")
+  chatMessageStates     MessageState[]         @relation("ChatMessageStates")
+  chatMessageReactions  MessageReaction[]      @relation("ChatMessageReactions")
+  conversationMemberships ConversationMember[] @relation("UserConversationMembers")
+  messageEditHistory    MessageEditHistory[]   @relation("MessageEditHistory")
+  conversationsCreated  Conversation[]        @relation("ConversationCreator")
+  conversationMembers   ConversationMember[]  @relation("ConversationMembers")
+  messagesSent          Message[]             @relation("MessagesSent")
+  messageStates         MessageState[]        @relation("MessageStates")
+  messageReactions      MessageReaction[]     @relation("MessageReactions")
+  pinnedMessages        PinnedMessage[]
 
   // Indexes for authentication and core user operations
-  @@index([username]) // Login by username
-  @@index([email])    // Login by email, find by email
   @@index([role])     // Admin/user filtering
   @@index([isOnline]) // Online status queries
   @@index([createdAt]) // User registration analytics
@@ -175,6 +186,8 @@ model Post {
   id         Int       @id @default(autoincrement())
   userId     Int       @map("user_id")
   content    String?   @db.Text
+   whoCanSee     String @default("public")    
+  whoCanComment String @default("everyone")
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
   deletedAt  DateTime? @map("deleted_at")
@@ -182,7 +195,6 @@ model Post {
   // Relations
   user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   media             PostMedia[]
-  privacySettings   PostPrivacySetting?
   hashtags          PostHashtag[]
   mentions          Mention[]
   comments          Comment[]
@@ -212,18 +224,6 @@ model PostMedia {
   @@map("post_media")
 }
 
-model PostPrivacySetting {
-  postId        Int    @id @map("post_id")
-  whoCanSee     String @map("who_can_see") @db.VarChar(20) @default("public") // public, follower, only_me
-  whoCanComment String @map("who_can_comment") @db.VarChar(20) @default("everyone") // everyone, follower, only_me
-
-  // Relations
-  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
-
-  @@index([whoCanSee])
-  @@index([whoCanComment])
-  @@map("post_privacy_settings")
-}
 
 model Hashtag {
   id        Int           @id @default(autoincrement())
@@ -233,7 +233,6 @@ model Hashtag {
   // Relations
   posts PostHashtag[]
 
-  @@index([name])
   @@map("hashtags")
 }
 
@@ -266,6 +265,10 @@ model Comment {
   replies  Comment[] @relation("CommentReplies")
   mentions Mention[]
 
+// Thêm composite index cho nested comments
+@@index([postId, parentId])  // Query replies nhanh hơn
+@@index([postId, createdAt]) // Phân trang comments
+
   // Indexes
   @@index([postId])
   @@index([userId])
@@ -292,7 +295,6 @@ model Reaction {
   // Unique constraint: một user chỉ react 1 lần cho 1 target
   @@unique([userId, targetType, targetId])
   @@index([targetType, targetId])
-  @@index([userId])
   @@index([reactionType])
   @@index([createdAt])
   @@map("reactions")
@@ -396,13 +398,11 @@ model Notification {
   isRead     Boolean                  @default(false) @map("is_read")
   createdAt  DateTime                 @default(now()) @map("created_at")
   updatedAt  DateTime                 @default(now()) @map("updated_at")
-  templateId Int?                     @map("template_id")
   reactionId Int?                     @map("reaction_id")
 
   // Relations
   user     User                  @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
   actor    User                  @relation("ActorNotifications", fields: [actorId], references: [id], onDelete: Cascade)
-  template NotificationTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   reaction ReactionConfig?       @relation(fields: [reactionId], references: [id], onDelete: SetNull)
 
   metadata Json?  // Dữ liệu bổ sung
@@ -427,24 +427,6 @@ model Notification {
 
   @@map("notifications")
 }
-model NotificationTemplate {
-  id        Int                     @id @default(autoincrement())
-  type      NotificationType        @unique
-  targetType NotificationTargetType? 
-  template  String                  // Template với placeholder: "{{actor_name}} đã thích {{target_type}} của bạn"
-  isActive  Boolean                 @default(true) @map("is_active")
-  createdAt DateTime                @default(now()) @map("created_at")
-  updatedAt DateTime                @updatedAt @map("updated_at")
-
-  // Relations
-  notifications Notification[]
-
-  // Indexes
-  @@unique([type, targetType])
-  @@index([type])
-  @@index([isActive])
-  @@map("notification_templates")
-}
 model Follow {
   followerId  Int   @map("follower_id")     // id của người đi follow
   followingId Int   @map("following_id")    // id của người bị follow
@@ -453,8 +435,10 @@ model Follow {
   follower User @relation("Following", fields: [followerId], references: [id], onDelete: Cascade)
   following User @relation("Followers", fields: [followingId], references: [id], onDelete: Cascade)
 
+@@index([followingId, createdAt]) // Lấy danh sách followers
+@@index([followerId, createdAt])  // Lấy danh sách following
   @@id([followerId, followingId])  // composite primary key
-  @@map("follows")                 // tên bảng trong DB
+  @@map("follows")                
 }
 
 model FollowRequest {
@@ -471,4 +455,197 @@ model FollowRequest {
   @@unique([fromUserId, toUserId]) // 1 user chỉ gửi 1 request cho 1 user
   @@index([toUserId])      // tăng tốc query lấy request pending cho 1 user
   @@map("follow_requests")
+}
+
+// ================== ENUMS ==================
+enum ConversationType {
+  DIRECT      // Chat 1-1
+  GROUP       // Chat nhóm
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  FILE
+  POST_SHARE
+}
+
+enum DeliveryStatus {
+  SENT
+  DELIVERED
+  READ
+}
+
+enum MemberRole {
+  ADMIN
+  MEMBER
+}
+
+
+// Bảng Conversation - Lưu các cuộc trò chuyện
+model Conversation {
+  id            Int               @id @default(autoincrement())
+  type          ConversationType  @default(DIRECT)
+  name          String?           @db.VarChar(100) // Tên nhóm (nullable cho direct chat)
+  avatarUrl     String?           @map("avatar_url") @db.VarChar(255) // Avatar nhóm
+  createdBy     Int?              @map("created_by") // User tạo nhóm
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+  lastMessageAt DateTime?         @map("last_message_at") // Thời gian tin nhắn cuối
+
+  // Relations
+  creator       User?                    @relation("ConversationCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  members       ConversationMember[]
+  messages      Message[]
+  pinnedMessages PinnedMessage[]
+
+  // Indexes
+  @@index([type])
+  @@index([lastMessageAt])
+  @@index([createdBy])
+  @@map("conversations")
+}
+
+// Bảng ConversationMember - Thành viên trong conversation
+model ConversationMember {
+  id              Int          @id @default(autoincrement())
+  conversationId  Int          @map("conversation_id")
+  userId          Int          @map("user_id")
+  role            MemberRole   @default(MEMBER)
+  joinedAt        DateTime     @default(now()) @map("joined_at")
+  leftAt          DateTime?    @map("left_at")
+  lastReadAt      DateTime?    @map("last_read_at") // Thời gian đọc tin nhắn cuối
+  isMuted         Boolean      @default(false) @map("is_muted") // Tắt thông báo
+  isPinned        Boolean      @default(false) @map("is_pinned") // Ghim hội thoại
+
+  // Relations
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation("UserConversationMembers", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@index([conversationId])
+  @@index([lastReadAt])
+  @@index([isPinned])
+  @@index([userId, isPinned, lastReadAt])
+@@index([conversationId, leftAt])
+
+  @@map("conversation_members")
+}
+
+// Bảng Message - Tin nhắn
+model Message {
+  id              Int           @id @default(autoincrement())
+  conversationId  Int           @map("conversation_id")
+  senderId        Int?          @map("sender_id") // null nếu là tin nhắn hệ thống
+  type            MessageType   @default(TEXT)
+  content         String?       @db.Text
+  mediaUrl        String?       @map("media_url") @db.VarChar(500)
+  replyToId       Int?          @map("reply_to_id")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  deletedAt       DateTime?     @map("deleted_at")
+  isSystem        Boolean       @default(false) @map("is_system")
+
+  // Relations
+  conversation    Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender          User?              @relation("ChatMessagesSent", fields: [senderId], references: [id], onDelete: Cascade)
+  replyTo         Message?           @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies         Message[]          @relation("MessageReplies")
+  states          MessageState[] @relation("ChatMessageStates")
+  reactions       MessageReaction[] @relation("ChatMessageReactions")
+  pinnedIn        PinnedMessage[]
+  editHistory     MessageEditHistory[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@index([replyToId])
+  @@index([deletedAt])
+  @@index([type])
+  @@index([conversationId, deletedAt])
+@@index([conversationId, isSystem])
+  @@map("messages")
+}
+
+// Bảng MessageEditHistory - Lịch sử chỉnh sửa tin nhắn
+model MessageEditHistory {
+  id          Int      @id @default(autoincrement())
+  messageId   Int      @map("message_id")
+  oldContent  String?  @map("old_content") @db.Text
+  newContent  String   @map("new_content") @db.Text
+  editedBy    Int      @map("edited_by")
+  editedAt    DateTime @default(now()) @map("edited_at")
+
+  // Relations
+  message     Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  editor      User    @relation("MessageEditHistory", fields: [editedBy], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([editedBy])
+  @@index([editedAt])
+  @@map("message_edit_history")
+}
+
+// Bảng MessageState - Trạng thái tin nhắn (đã gửi, đã nhận, đã đọc)
+model MessageState {
+  id         Int             @id @default(autoincrement())
+  messageId  Int             @map("message_id")
+  userId     Int             @map("user_id")
+  status     DeliveryStatus  @default(SENT)
+  createdAt  DateTime        @default(now()) @map("created_at")
+  updatedAt  DateTime        @updatedAt @map("updated_at")
+
+  // Relations
+  message Message @relation("ChatMessageStates", fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation("ChatMessageStates", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+  @@index([status])
+  @@map("message_states")
+}
+
+// Bảng MessageReaction - React tin nhắn (emoji)
+model MessageReaction {
+  id         Int      @id @default(autoincrement())
+  messageId  Int      @map("message_id")
+  userId     Int      @map("user_id")
+  emoji      String   @db.VarChar(10)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  // Relations
+  message Message @relation("ChatMessageReactions", fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation("ChatMessageReactions", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([messageId])
+  @@index([userId])
+  @@map("message_reactions")
+}
+
+// Bảng PinnedMessage - Tin nhắn được ghim
+model PinnedMessage {
+  id              Int      @id @default(autoincrement())
+  conversationId  Int      @map("conversation_id")
+  messageId       Int      @map("message_id")
+  pinnedById      Int      @map("pinned_by_id")
+  pinnedAt        DateTime @default(now()) @map("pinned_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  pinnedBy     User         @relation(fields: [pinnedById], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, messageId])
+  @@index([conversationId, pinnedAt])
+  @@index([pinnedById])
+  @@map("pinned_messages")
+}
+model TypingIndicator {
+  conversationId Int
+  userId         Int
+  startedAt      DateTime
+  expiresAt      DateTime
+  
+  @@unique([conversationId, userId])
 }

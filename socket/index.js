@@ -1,6 +1,4 @@
 import { getIO } from '../config/socket.js'
-import { followHandler } from './handlers/followHandler.js'
-import { notificationHandler } from './handlers/notificationHandler.js'
 
 export const registerSocketHandlers = () => {
     const io = getIO()
@@ -12,9 +10,6 @@ export const registerSocketHandlers = () => {
             console.log(`User ${userId} joined room user_${userId}`);
         }
 
-        // Register handlers
-        // followHandler(io, socket);
-        // notificationHandler(io, socket);
 
         socket.on('disconnect', () => {
             console.log("User disconnected:", socket.id);
