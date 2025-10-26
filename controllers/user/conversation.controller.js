@@ -13,7 +13,7 @@ export const getConversations = async (req, res) => {
     const userId = req.user.id;
     const { page = 1, limit = 20 } = req.query;
 
-    // Lấy conversations mà user là thành viên
+    // Lấy conversations mà user là thành viên và đã có tin nhắn
     const conversations = await prisma.conversation.findMany({
       where: {
         members: {
@@ -21,6 +21,9 @@ export const getConversations = async (req, res) => {
             userId: userId,
             leftAt: null, // Chưa rời khỏi conversation
           },
+        },
+        messages: {
+          some: {}, // Có ít nhất 1 tin nhắn
         },
       },
       include: {
@@ -54,15 +57,18 @@ export const getConversations = async (req, res) => {
             },
           },
         },
-        // Đếm số tin nhắn chưa đọc
+        // Đếm số tin nhắn chưa đọc (chỉ tin nhắn không phải của user hiện tại)
         _count: {
           select: {
             messages: {
               where: {
+                senderId: {
+                  not: userId, // Chỉ đếm tin nhắn không phải của user hiện tại
+                },
                 states: {
-                  none: {
+                  some: {
                     userId: userId,
-                    status: 'READ',
+                    status: 'DELIVERED', // Đếm tin nhắn có status DELIVERED (chưa đọc)
                   },
                 },
                 deletedAt: null,
@@ -78,7 +84,7 @@ export const getConversations = async (req, res) => {
       skip: (parseInt(page) - 1) * parseInt(limit),
     });
 
-    // Đếm tổng số conversations
+    // Đếm tổng số conversations có tin nhắn
     const totalCount = await prisma.conversation.count({
       where: {
         members: {
@@ -86,6 +92,9 @@ export const getConversations = async (req, res) => {
             userId: userId,
             leftAt: null,
           },
+        },
+        messages: {
+          some: {}, // Có ít nhất 1 tin nhắn
         },
       },
     });
@@ -115,13 +124,31 @@ export const getConversations = async (req, res) => {
 export const createConversation = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { type = 'DIRECT', participantIds, name, avatarUrl } = req.body;
+    const { type = 'DIRECT', participantIds, participantUsername, name, avatarUrl } = req.body;
 
-    // Kiểm tra dữ liệu đầu vào
-    if (type === 'DIRECT' && (!participantIds || participantIds.length !== 1)) {
+    let participantId;
+
+    // Nếu có participantUsername, tìm userId từ username
+    if (participantUsername) {
+      const participant = await prisma.user.findUnique({
+        where: { username: participantUsername },
+        select: { id: true }
+      });
+
+      if (!participant) {
+        return res.status(404).json({
+          success: false,
+          message: 'Không tìm thấy người dùng với username này',
+        });
+      }
+
+      participantId = participant.id;
+    } else if (participantIds && participantIds.length === 1) {
+      participantId = participantIds[0];
+    } else {
       return res.status(400).json({
         success: false,
-        message: 'Đối với chat trực tiếp, cần đúng 1 người tham gia',
+        message: 'Cần cung cấp participantUsername hoặc participantIds',
       });
     }
 
@@ -135,7 +162,7 @@ export const createConversation = async (req, res) => {
     // Kiểm tra và tạo conversation
     let conversation;
     if (type === 'DIRECT') {
-      conversation = await findOrCreateDirectConversation(userId, participantIds[0]);
+      conversation = await findOrCreateDirectConversation(userId, participantId);
       if (conversation && conversation.id) {
         return res.json({
           success: true,

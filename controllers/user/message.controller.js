@@ -1,5 +1,6 @@
 import prisma from "../../utils/prisma.js";
 import { checkConversationAccess } from "../../services/conversationService.js";
+import { getIO } from "../../config/socket.js";
 import {
   checkMessageOwnership,
   getMessagesWithAccess,
@@ -75,6 +76,51 @@ export const sendMessage = async (req, res) => {
       content,
       mediaUrl,
       replyToId,
+    });
+
+    // Emit socket event for real-time updates
+    const io = getIO();
+    io.to(`conversation_${conversationId}`).emit('chat:new_message', {
+      message,
+      conversationId
+    });
+
+    // Send notification to other members
+    const conversationMembers = await prisma.conversationMember.findMany({
+      where: {
+        conversationId: parseInt(conversationId),
+        userId: { not: userId },
+        leftAt: null,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+          }
+        }
+      }
+    });
+
+    conversationMembers.forEach(member => {
+      io.to(`user_${member.userId}`).emit('notification', {
+        id: message.id,
+        type: 'MESSAGE',
+        from: {
+          id: message.sender.id,
+          username: message.sender.username,
+          fullName: message.sender.fullName,
+          avatarUrl: message.sender.avatarUrl
+        },
+        message: message.content,
+      });
+      
+      // Emit unread count update for real-time sidebar update
+      io.to(`user_${member.userId}`).emit('chat:unread_count_update', {
+        conversationId,
+        action: 'increment'
+      });
     });
 
     res.status(201).json({
