@@ -1,15 +1,11 @@
 import prisma from "../../utils/prisma.js";
 import { checkConversationAccess } from "../../services/conversationService.js";
-import { getIO } from "../../config/socket.js";
 import {
   checkMessageOwnership,
   getMessagesWithAccess,
-  createMessageWithStates,
-  markMessageAsRead as markMessageAsReadService,
   toggleMessageReaction as toggleMessageReactionService,
   togglePinMessage as togglePinMessageService,
   getPinnedMessages as getPinnedMessagesService,
-  markConversationAsRead as markConversationAsReadService,
 } from "../../services/messageService.js";
 
 
@@ -41,100 +37,6 @@ export const getMessages = async (req, res) => {
   }
 };
 
-// Gửi tin nhắn mới
-export const sendMessage = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { conversationId, type = 'TEXT', content, mediaUrl, replyToId } = req.body;
-
-    // Kiểm tra quyền truy cập conversation
-    const hasAccess = await checkConversationAccess(userId, conversationId);
-    if (!hasAccess) {
-      return res.status(403).json({
-        success: false,
-        message: 'Bạn không có quyền gửi tin nhắn trong cuộc trò chuyện này',
-      });
-    }
-
-    // Kiểm tra replyTo message tồn tại (nếu có)
-    if (replyToId) {
-      const replyToMessage = await prisma.message.findUnique({
-        where: { id: parseInt(replyToId) },
-      });
-
-      if (!replyToMessage || replyToMessage.deletedAt) {
-        return res.status(404).json({
-          success: false,
-          message: 'Tin nhắn trả lời không tồn tại',
-        });
-      }
-    }
-
-    // Tạo tin nhắn với xử lý message states
-    const message = await createMessageWithStates(conversationId, userId, {
-      type,
-      content,
-      mediaUrl,
-      replyToId,
-    });
-
-    // Emit socket event for real-time updates
-    const io = getIO();
-    io.to(`conversation_${conversationId}`).emit('chat:new_message', {
-      message,
-      conversationId
-    });
-
-    // Send notification to other members
-    const conversationMembers = await prisma.conversationMember.findMany({
-      where: {
-        conversationId: parseInt(conversationId),
-        userId: { not: userId },
-        leftAt: null,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true,
-            fullName: true,
-          }
-        }
-      }
-    });
-
-    conversationMembers.forEach(member => {
-      io.to(`user_${member.userId}`).emit('notification', {
-        id: message.id,
-        type: 'MESSAGE',
-        from: {
-          id: message.sender.id,
-          username: message.sender.username,
-          fullName: message.sender.fullName,
-          avatarUrl: message.sender.avatarUrl
-        },
-        message: message.content,
-      });
-      
-      // Emit unread count update for real-time sidebar update
-      io.to(`user_${member.userId}`).emit('chat:unread_count_update', {
-        conversationId,
-        action: 'increment'
-      });
-    });
-
-    res.status(201).json({
-      success: true,
-      data: { message },
-    });
-  } catch (error) {
-    console.error('Error sending message:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Có lỗi xảy ra khi gửi tin nhắn',
-    });
-  }
-};
 
 // Chỉnh sửa tin nhắn
 export const editMessage = async (req, res) => {
@@ -284,43 +186,6 @@ export const deleteMessage = async (req, res) => {
   }
 };
 
-// Đánh dấu tin nhắn đã đọc
-export const markMessageAsRead = async (req, res) => {
-  try {
-    const { messageId } = req.params;
-    const userId = req.user.id;
-
-    // Kiểm tra quyền truy cập conversation thông qua message
-    const message = await checkMessageOwnership(userId, messageId);
-    if (!message) {
-      return res.status(403).json({
-        success: false,
-        message: 'Bạn không có quyền truy cập cuộc trò chuyện này',
-      });
-    }
-
-    if (!message || message.deletedAt) {
-      return res.status(404).json({
-        success: false,
-        message: 'Không tìm thấy tin nhắn',
-      });
-    }
-
-    // Cập nhật trạng thái đã đọc bằng hàm từ service
-    await markMessageAsReadService(messageId, userId);
-
-    res.json({
-      success: true,
-      message: 'Đã đánh dấu tin nhắn đã đọc',
-    });
-  } catch (error) {
-    console.error('Error marking message as read:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Có lỗi xảy ra khi đánh dấu tin nhắn đã đọc',
-    });
-  }
-};
 
 // Lấy trạng thái đọc của tin nhắn
 export const getMessageStates = async (req, res) => {
@@ -569,39 +434,6 @@ export const togglePinMessage = async (req, res) => {
   }
 };
 
-// Đánh dấu tất cả tin nhắn trong conversation đã đọc
-export const markConversationAsRead = async (req, res) => {
-  try {
-    const { conversationId } = req.params;
-    const userId = req.user.id;
-
-    // Kiểm tra quyền truy cập conversation
-    const hasAccess = await checkConversationAccess(userId, conversationId);
-    if (!hasAccess) {
-      return res.status(403).json({
-        success: false,
-        message: 'Bạn không có quyền truy cập cuộc trò chuyện này',
-      });
-    }
-
-    // Đánh dấu tất cả tin nhắn đã đọc bằng hàm từ service
-    const markedCount = await markConversationAsReadService(userId, conversationId);
-
-    res.json({
-      success: true,
-      message: markedCount > 0
-        ? `Đã đánh dấu ${markedCount} tin nhắn đã đọc`
-        : 'Không có tin nhắn chưa đọc',
-      data: { markedCount },
-    });
-  } catch (error) {
-    console.error('Error marking conversation as read:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Có lỗi xảy ra khi đánh dấu cuộc trò chuyện đã đọc',
-    });
-  }
-};
 
 // Lấy danh sách tin nhắn được ghim trong conversation
 export const getPinnedMessages = async (req, res) => {

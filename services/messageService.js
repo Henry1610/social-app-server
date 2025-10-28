@@ -52,6 +52,7 @@ export const getMessagesWithAccess = async (userId, conversationId, options = {}
           },
         },
       },
+      states: true, // Include message states for status indicators
       editHistory: {
         include: {
           editor: {
@@ -139,27 +140,34 @@ export const createMessageWithStates = async (conversationId, senderId, messageD
       userId: { not: senderId },
       leftAt: null,
     },
-    select: { userId: true },
+    include: {
+      user: {
+        select: {
+          id: true,
+          isOnline: true
+        }
+      }
+    },
   });
 
   if (conversationMembers.length > 0) {
-    await prisma.messageState.createMany({
-      data: conversationMembers.map((member) => ({
+    // Chuẩn bị dữ liệu để tạo MessageState
+    const messageStates = conversationMembers.map((member) => {
+      // Nếu user đang online, set status = DELIVERED ngay
+      // Nếu offline, set status = SENT
+      const status = member.user.isOnline ? 'DELIVERED' : 'SENT';
+      
+      return {
         messageId: message.id,
         userId: member.userId,
-        status: 'DELIVERED',
-      })),
+        status: status,
+      };
+    });
+
+    await prisma.messageState.createMany({
+      data: messageStates
     });
   }
-
-  // Tạo message state cho sender (SENT)
-  await prisma.messageState.create({
-    data: {
-      messageId: message.id,
-      userId: senderId,
-      status: 'SENT',
-    },
-  });
 
   // Lấy thông tin đầy đủ của message để trả về
   const fullMessage = await prisma.message.findUnique({
@@ -348,45 +356,3 @@ export const getPinnedMessages = async (userId, conversationId) => {
   });
 };
 
-export const markConversationAsRead = async (userId, conversationId) => {
-  // Kiểm tra quyền truy cập
-  const hasAccess = await checkConversationAccess(userId, conversationId);
-  if (!hasAccess) {
-    throw new Error('Bạn không có quyền truy cập cuộc trò chuyện này');
-  }
-
-  // Lấy tất cả tin nhắn chưa đọc của user trong conversation
-  const unreadMessages = await prisma.message.findMany({
-    where: {
-      conversationId: parseInt(conversationId),
-      deletedAt: null,
-      states: {
-        none: {
-          userId,
-          status: 'READ',
-        },
-      },
-    },
-    select: { id: true },
-  });
-
-  if (unreadMessages.length === 0) {
-    return 0;
-  }
-
-  // Cập nhật tất cả message states thành READ
-  await prisma.messageState.updateMany({
-    where: {
-      messageId: {
-        in: unreadMessages.map(msg => msg.id),
-      },
-      userId,
-    },
-    data: {
-      status: 'READ',
-      updatedAt: new Date(),
-    },
-  });
-
-  return unreadMessages.length;
-};

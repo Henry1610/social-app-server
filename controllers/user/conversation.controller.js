@@ -70,7 +70,9 @@ export const getConversations = async (req, res) => {
                 states: {
                   some: {
                     userId: userId,
-                    status: 'DELIVERED', // Đếm tin nhắn có status DELIVERED (chưa đọc)
+                    status: {
+                      in: ['SENT', 'DELIVERED'] // Đếm tin nhắn có status SENT hoặc DELIVERED (chưa đọc)
+                    },
                   },
                 },
                 deletedAt: null,

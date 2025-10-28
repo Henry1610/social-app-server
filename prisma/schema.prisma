@@ -559,24 +559,6 @@ model Message {
   @@map("messages")
 }
 
-// Bảng MessageEditHistory - Lịch sử chỉnh sửa tin nhắn
-model MessageEditHistory {
-  id         Int      @id @default(autoincrement())
-  messageId  Int      @map("message_id")
-  oldContent String?  @map("old_content") @db.Text
-  newContent String   @map("new_content") @db.Text
-  editedBy   Int      @map("edited_by")
-  editedAt   DateTime @default(now()) @map("edited_at")
-
-  // Relations
-  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  editor  User    @relation("MessageEditHistory", fields: [editedBy], references: [id], onDelete: Cascade)
-
-  @@index([messageId])
-  @@index([editedBy])
-  @@index([editedAt])
-  @@map("message_edit_history")
-}
 
 // Bảng MessageState - Trạng thái tin nhắn (đã gửi, đã nhận, đã đọc)
 model MessageState {
@@ -595,6 +577,25 @@ model MessageState {
   @@index([userId])
   @@index([status])
   @@map("message_states")
+}
+
+// Bảng MessageEditHistory - Lịch sử chỉnh sửa tin nhắn
+model MessageEditHistory {
+  id         Int      @id @default(autoincrement())
+  messageId  Int      @map("message_id")
+  oldContent String?  @map("old_content") @db.Text
+  newContent String   @map("new_content") @db.Text
+  editedBy   Int      @map("edited_by")
+  editedAt   DateTime @default(now()) @map("edited_at")
+
+  // Relations
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  editor  User    @relation("MessageEditHistory", fields: [editedBy], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([editedBy])
+  @@index([editedAt])
+  @@map("message_edit_history")
 }
 
 // Bảng MessageReaction - React tin nhắn (emoji)
