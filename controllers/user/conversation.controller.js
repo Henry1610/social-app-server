@@ -55,6 +55,7 @@ export const getConversations = async (req, res) => {
               select: {
                 id: true,
                 username: true,
+                fullName: true,
               },
             },
           },
@@ -132,34 +133,43 @@ export const createConversation = async (req, res) => {
 
     let participantId;
 
-    // Nếu có participantUsername, tìm userId từ username
-    if (participantUsername) {
-      const participant = await prisma.user.findUnique({
-        where: { username: participantUsername },
-        select: { id: true }
-      });
+    // Xử lý validation dựa trên type
+    if (type === 'DIRECT') {
+      // DIRECT conversation cần 1 participant
+      if (participantUsername) {
+        const participant = await prisma.user.findUnique({
+          where: { username: participantUsername },
+          select: { id: true }
+        });
 
-      if (!participant) {
-        return res.status(404).json({
+        if (!participant) {
+          return res.status(404).json({
+            success: false,
+            message: 'Không tìm thấy người dùng với username này',
+          });
+        }
+
+        participantId = participant.id;
+      } else if (participantIds && participantIds.length === 1) {
+        participantId = participantIds[0];
+      } else {
+        return res.status(400).json({
           success: false,
-          message: 'Không tìm thấy người dùng với username này',
+          message: 'Cần cung cấp participantUsername hoặc participantIds cho chat 1-1',
         });
       }
-
-      participantId = participant.id;
-    } else if (participantIds && participantIds.length === 1) {
-      participantId = participantIds[0];
+    } else if (type === 'GROUP') {
+      // GROUP conversation cần ít nhất 2 participants
+      if (!participantIds || participantIds.length < 2) {
+        return res.status(400).json({
+          success: false,
+          message: 'Đối với nhóm chat, cần ít nhất 2 người tham gia',
+        });
+      }
     } else {
       return res.status(400).json({
         success: false,
-        message: 'Cần cung cấp participantUsername hoặc participantIds',
-      });
-    }
-
-    if (type === 'GROUP' && (!participantIds || participantIds.length < 2)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Đối với nhóm chat, cần ít nhất 2 người tham gia',
+        message: 'Type conversation không hợp lệ',
       });
     }
 

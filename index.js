@@ -42,5 +42,5 @@ registerSocketHandlers();
 app.use(express.json());
 route(app);
 
-server.listen(5000, () => {
+server.listen(process.env.PORT, () => {
 });

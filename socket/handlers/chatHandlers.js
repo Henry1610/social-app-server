@@ -585,5 +585,133 @@ export const registerChatHandlers = () => {
                 console.error('Error handling disconnect:', error);
             }
         });
+
+        // Handle add members to group
+        socket.on('chat:add_members', async (data) => {
+            try {
+                const { conversationId, memberIds } = data;
+                const userId = socket.handshake.auth?.userId;
+
+                console.log(`User ${userId} adding members to conversation ${conversationId}:`, memberIds);
+
+                // Kiểm tra quyền admin
+                const conversation = await prisma.conversation.findFirst({
+                    where: {
+                        id: parseInt(conversationId),
+                        type: 'GROUP',
+                        members: {
+                            some: {
+                                userId: userId,
+                                role: 'ADMIN',
+                                leftAt: null
+                            }
+                        }
+                    }
+                });
+
+                if (!conversation) {
+                    socket.emit('chat:error', {
+                        message: 'Bạn không có quyền thêm thành viên vào nhóm này'
+                    });
+                    return;
+                }
+
+                // Kiểm tra xem các user có tồn tại không
+                const users = await prisma.user.findMany({
+                    where: {
+                        id: { in: memberIds.map(id => parseInt(id)) }
+                    },
+                    select: {
+                        id: true,
+                        username: true,
+                        fullName: true,
+                        avatarUrl: true
+                    }
+                });
+
+                if (users.length !== memberIds.length) {
+                    socket.emit('chat:error', {
+                        message: 'Một số người dùng không tồn tại'
+                    });
+                    return;
+                }
+
+                // Kiểm tra xem các user đã có trong group chưa
+                const existingMembers = await prisma.conversationMember.findMany({
+                    where: {
+                        conversationId: parseInt(conversationId),
+                        userId: { in: memberIds.map(id => parseInt(id)) },
+                        leftAt: null
+                    }
+                });
+
+                if (existingMembers.length > 0) {
+                    socket.emit('chat:error', {
+                        message: 'Một số người đã có trong nhóm'
+                    });
+                    return;
+                }
+
+                // Thêm thành viên vào group
+                const newMembers = await prisma.conversationMember.createMany({
+                    data: memberIds.map(memberId => ({
+                        conversationId: parseInt(conversationId),
+                        userId: parseInt(memberId),
+                        role: 'MEMBER',
+                        joinedAt: new Date()
+                    }))
+                });
+
+                // Lấy thông tin chi tiết của các thành viên mới
+                const addedMembers = await prisma.conversationMember.findMany({
+                    where: {
+                        conversationId: parseInt(conversationId),
+                        userId: { in: memberIds.map(id => parseInt(id)) },
+                        leftAt: null
+                    },
+                    include: {
+                        user: {
+                            select: {
+                                id: true,
+                                username: true,
+                                fullName: true,
+                                avatarUrl: true,
+                                isOnline: true,
+                                lastSeen: true
+                            }
+                        }
+                    }
+                });
+
+                // Emit event cho tất cả thành viên trong group
+                const allMembers = await getConversationMembers(conversationId);
+                allMembers.forEach(member => {
+                    io.to(`user_${member.userId}`).emit('chat:members_added', {
+                        conversationId: parseInt(conversationId),
+                        addedMembers: addedMembers.map(m => ({
+                            id: m.user.id,
+                            username: m.user.username,
+                            fullName: m.user.fullName,
+                            avatarUrl: m.user.avatarUrl,
+                            role: m.role,
+                            joinedAt: m.joinedAt
+                        })),
+                        addedBy: {
+                            id: userId,
+                            username: socket.user?.username,
+                            fullName: socket.user?.fullName
+                        }
+                    });
+                });
+
+                console.log(`Added ${newMembers.count} members to conversation ${conversationId}`);
+
+            } catch (error) {
+                console.error('Error adding members:', error);
+                socket.emit('chat:error', {
+                    message: 'Có lỗi xảy ra khi thêm thành viên'
+                });
+            }
+        });
     });
 };

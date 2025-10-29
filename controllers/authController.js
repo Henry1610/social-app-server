@@ -73,50 +73,43 @@ export const verifyOtpAndRegister = async (req, res) => {
     // hash password và tạo user cùng với privacy settings
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Sử dụng transaction để tạo user và privacy settings cùng lúc
-    const result = await prisma.$transaction(async (tx) => {
-      // Tạo user
-      const user = await tx.user.create({
-        data: {
-          username,
-          email,
-          phone,
-          passwordHash: hashedPassword,
-          fullName,
-          avatarUrl: "/images/avatar-IG-mac-dinh-1.jpg"
+    const user = await prisma.user.create({
+      data: {
+        username,
+        email,
+        phone,
+        passwordHash: hashedPassword,
+        fullName,
+        avatarUrl: "/images/avatar-IG-mac-dinh-1.jpg",
+        privacySettings: {
+          create: {
+            isPrivate: false,
+            whoCanMessage: "everyone",
+            whoCanTagMe: "everyone",
+            whoCanFindByUsername: true,
+            showOnlineStatus: true,
+          },
         },
-      });
-
-      // Tạo privacy settings mặc định cho user mới
-      await tx.userPrivacySetting.create({
-        data: {
-          userId: user.id,
-          isPrivate: false,
-          whoCanMessage: 'everyone',
-          whoCanTagMe: 'everyone',
-          whoCanFindByUsername: true,
-          showOnlineStatus: true,
-        },
-      });
-
-      return user;
+      },
+      include: {
+        privacySettings: true,
+      },
     });
 
-    const user = result;
     const accessToken = createAccessToken(user);
     const refreshToken = await createRefreshToken(user);
 
     return res.status(201).json({
       message: "Đăng ký thành công",
       user: {
-        id: userWithPrivacy.id,
-        username: userWithPrivacy.username,
-        email: userWithPrivacy.email,
-        phone: userWithPrivacy.phone,
-        fullName: userWithPrivacy.fullName,
-        avatarUrl: userWithPrivacy.avatarUrl,
-        role: userWithPrivacy.role,
-        privacySettings: userWithPrivacy.privacySettings,
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        phone: user.phone,
+        fullName: user.fullName,
+        avatarUrl: user.avatarUrl,
+        role: user.role,
+        privacySettings: user.privacySettings,
       },
       tokens: {
         accessToken,
@@ -124,7 +117,7 @@ export const verifyOtpAndRegister = async (req, res) => {
       },
     });
   } catch (error) {
-    return res.status(500).json({ error: "Xác thực thất bại!" });
+    return res.status(500).json({ error: error.message });
   }
 };
 
