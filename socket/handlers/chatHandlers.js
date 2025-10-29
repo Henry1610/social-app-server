@@ -337,6 +337,104 @@ export const registerChatHandlers = () => {
             }
         });
 
+        // Edit message
+        socket.on('chat:edit_message', async (data) => {
+            try {
+                const { messageId, content } = data;
+
+                // Check if user has access to conversation through message
+                const message = await prisma.message.findUnique({
+                    where: { id: parseInt(messageId) },
+                    include: { sender: true }
+                });
+
+                if (!message || message.deletedAt) {
+                    socket.emit('chat:error', { message: 'Không tìm thấy tin nhắn' });
+                    return;
+                }
+
+                if (message.senderId !== userId) {
+                    socket.emit('chat:error', { message: 'Bạn không có quyền chỉnh sửa tin nhắn này' });
+                    return;
+                }
+
+                // Only allow editing text messages
+                if (message.type !== 'TEXT') {
+                    socket.emit('chat:error', { message: 'Chỉ có thể chỉnh sửa tin nhắn văn bản' });
+                    return;
+                }
+
+                // Check if new content is different from old content
+                if (content.trim() === message.content?.trim()) {
+                    socket.emit('chat:error', { message: 'Nội dung mới phải khác nội dung cũ' });
+                    return;
+                }
+
+                // Save edit history before updating
+                if (message.content) {
+                    await prisma.messageEditHistory.create({
+                        data: {
+                            messageId: parseInt(messageId),
+                            oldContent: message.content,
+                            newContent: content.trim(),
+                            editedBy: userId,
+                        },
+                    });
+                }
+
+                // Update message
+                const updatedMessage = await prisma.message.update({
+                    where: { id: parseInt(messageId) },
+                    data: {
+                        content: content.trim(),
+                        updatedAt: new Date(),
+                    },
+                    include: {
+                        sender: {
+                            select: {
+                                id: true,
+                                username: true,
+                                fullName: true,
+                                avatarUrl: true,
+                            },
+                        },
+                        editHistory: {
+                            include: {
+                                editor: {
+                                    select: {
+                                        id: true,
+                                        username: true,
+                                        fullName: true,
+                                    },
+                                },
+                            },
+                            orderBy: {
+                                editedAt: 'asc',
+                            },
+                        },
+                    },
+                });
+
+                io.to(`conversation_${message.conversationId}`).emit('chat:message_edited', {
+                    message: updatedMessage,
+                    conversationId: message.conversationId
+                });
+
+                // Refresh preview tin nhắn cuối cùng
+                const allConversationMembers = await getConversationMembers(message.conversationId);
+                allConversationMembers.forEach(member => {
+                    io.to(`user_${member.userId}`).emit('chat:conversation_updated', {
+                        conversationId: message.conversationId,
+                        action: 'update'
+                    });
+                });
+
+            } catch (error) {
+                console.error('Error editing message:', error);
+                socket.emit('chat:error', { message: 'Có lỗi xảy ra khi chỉnh sửa tin nhắn' });
+            }
+        });
+
         // Typing indicator
         socket.on('chat:typing', async (data) => {
             const { conversationId, isTyping } = data;
@@ -411,6 +509,55 @@ export const registerChatHandlers = () => {
             } catch (error) {
                 console.error('Error handling message:seen:', error);
                 socket.emit('error', { message: 'Error marking messages as seen' });
+            }
+        });
+
+        // Handle recall message
+        socket.on('chat:recall_message', async (data) => {
+            try {
+                const { messageId, conversationId } = data;
+                const userId = socket.handshake.auth?.userId;
+
+                if (!userId) {
+                    socket.emit('chat:error', { message: 'Bạn cần đăng nhập để thực hiện hành động này' });
+                    return;
+                }
+
+                // Kiểm tra quyền thu hồi tin nhắn (chỉ người gửi mới có thể thu hồi)
+                const message = await prisma.message.findUnique({
+                    where: { id: parseInt(messageId) },
+                    include: { sender: true }
+                });
+
+                if (!message) {
+                    socket.emit('chat:error', { message: 'Tin nhắn không tồn tại' });
+                    return;
+                }
+
+                if (message.senderId !== userId) {
+                    socket.emit('chat:error', { message: 'Bạn không có quyền thu hồi tin nhắn này' });
+                    return;
+                }
+
+                // Cập nhật tin nhắn là đã thu hồi
+                await prisma.message.update({
+                    where: { id: parseInt(messageId) },
+                    data: { 
+                        isRecalled: true,
+                        recalledAt: new Date()
+                    }
+                });
+
+                // Emit tới tất cả members trong conversation
+                io.to(`conversation_${conversationId}`).emit('chat:message_recalled', {
+                    messageId: parseInt(messageId),
+                    conversationId: parseInt(conversationId),
+                    recalledBy: userId
+                });
+
+            } catch (error) {
+                console.error('Error handling chat:recall_message:', error);
+                socket.emit('chat:error', { message: 'Lỗi khi thu hồi tin nhắn' });
             }
         });
 

@@ -10,7 +10,6 @@ import {
 
 import {
   getMessages,
-  editMessage,
   deleteMessage,
   getMessageStates,
   toggleMessageReaction,
@@ -32,7 +31,6 @@ router.delete('/conversations/:conversationId/members/:userId', removeMember);
 
 // Message routes
 router.get('/conversations/:conversationId/messages', getMessages);
-router.put('/messages/:messageId', editMessage);
 router.delete('/messages/:messageId', deleteMessage);
 
 // Message state routes
