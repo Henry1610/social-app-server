@@ -18,11 +18,11 @@ export const getFollowersList = async (userId) => {
 
   const cached = await redisClient.get(cacheKey);
   if (cached) {
-    console.log(' Followers cache hit');
+    
     return JSON.parse(cached);
   }
 
-  console.log(' Followers cache miss - fetching from DB');
+  
 
   const followersData = await getFollowersByUserId(userId);
   const followers = followersData.map(f => f.follower);
@@ -39,11 +39,11 @@ export const getFollowingList = async (userId) => {
 
   const cached = await redisClient.get(cacheKey);
   if (cached) {
-    console.log(' Following cache hit');
+    
     return JSON.parse(cached);
   }
 
-  console.log(' Following cache miss - fetching from DB');
+  
 
   const followingData = await getFollowingByUserId(userId);
   const following = followingData.map(f => f.following);
@@ -116,7 +116,7 @@ export const updateFollowCacheAtomic = async (followerId, followingId, action) =
     throw new Error('Redis transaction failed');
   }
   
-  console.log(` Cache updated for ${action}:`, {
+  
     followerId,
     followingId
   });
@@ -137,7 +137,7 @@ export const invalidateUserCache = async (userId) => {
   
   await multi.exec();
   
-  console.log(' User cache invalidated:', userId);
+  
 };
 
 // ============ STATS SERVICE ============

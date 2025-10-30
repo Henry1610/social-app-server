@@ -373,7 +373,7 @@ export const facebookCallback = (req, res, next) => {
       return res.redirect(`${process.env.CLIENT_URL}/login?error=auth_failed`);
     }
     if (!authData.user) {
-      console.log("No user returned from Facebook");
+      
       return res.redirect(`${process.env.CLIENT_URL}/login?error=no_user`);
     }
     try {

@@ -5,6 +5,7 @@ import {
   getConversationWithAccess,
   findOrCreateDirectConversation,
 } from "../../services/conversationService.js";
+import { createSystemMessage } from "../../services/systemMessageService.js";
 
 
 // Lấy danh sách conversations của user hiện tại
@@ -18,7 +19,7 @@ export const getConversations = async (req, res) => {
       where: {
         members: {
           some: {
-            userId: userId,
+            userId: userId,            
             leftAt: null, // Chưa rời khỏi conversation
           },
         },
@@ -224,6 +225,23 @@ export const createConversation = async (req, res) => {
           },
         },
       });
+
+      // Tạo tin nhắn hệ thống khi tạo nhóm
+      const creator = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          username: true,
+          fullName: true
+        }
+      });
+
+      if (creator) {
+        await createSystemMessage(conversation.id, 'GROUP_CREATED', {
+          createdBy: creator.fullName || creator.username,
+          groupName: name || 'Nhóm chat'
+        });
+      }
     }
 
     res.status(201).json({

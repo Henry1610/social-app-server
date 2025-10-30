@@ -11,11 +11,11 @@ export const registerSocketHandlers = () => {
         const userId = socket.handshake.auth?.userId;
         if (userId) {
             socket.join(`user_${userId}`);
-            console.log(`User ${userId} joined room user_${userId}`);
+            
         }
 
         socket.on('disconnect', () => {
-            console.log("User disconnected:", socket.id);
+            
         })
     })
 }

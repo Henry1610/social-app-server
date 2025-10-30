@@ -10,10 +10,10 @@ export const sendSMS = async(to, message)=> {
   try {
     const sms =  client.messages.create({
       body: message,
-      from: process.env.TWILIO_PHONE_NUMBER, // số Twilio
+      from: process.env.TWILIO_PHONE_NUMBER, 
       to, 
     });
-    console.log("Gửi SMS thành công:", sms.sid);
+    
   } catch (error) {
     console.error("Lỗi gửi SMS:", error);
   }

@@ -2,6 +2,7 @@ import { getIO } from '../../config/socket.js';
 import prisma from '../../utils/prisma.js';
 import { createMessageWithStates } from '../../services/messageService.js';
 import { checkConversationAccess } from '../../services/conversationService.js';
+import { createSystemMessage } from '../../services/systemMessageService.js';
 
 // Helper functions để tránh lặp code
 const getUserConversations = async (userId) => {
@@ -87,6 +88,16 @@ const notifyUserStatus = (io, conversationId, userId, isOnline) => {
         lastSeen: new Date()
     };
     io.to(`conversation_${conversationId}`).emit('chat:user_status', statusData);
+};
+
+const emitConversationUpdate = async (io, conversationId, action) => {
+    const allMembers = await getConversationMembers(conversationId);
+    allMembers.forEach(member => {
+        io.to(`user_${member.userId}`).emit('chat:conversation_updated', {
+            conversationId: parseInt(conversationId),
+            action: action
+        });
+    });
 };
 
 export const registerChatHandlers = () => {
@@ -177,10 +188,17 @@ export const registerChatHandlers = () => {
                 // Kiểm tra xem đã join phòng chưa để tránh join trùng lặp
                 const roomName = `conversation_${conversationId}`;
                 const isAlreadyInRoom = socket.rooms.has(roomName);
-                
                 if (!isAlreadyInRoom) {
                     socket.join(roomName);
                 }
+                // Join phòng active để đánh dấu đang xem conversation
+                const activeRoomName = `active_conversation_${conversationId}`;
+                const isAlreadyInActive = socket.rooms.has(activeRoomName);
+                if (!isAlreadyInActive) {
+                    socket.join(activeRoomName);
+                    
+                }
+                socket.data.activeConversationId = parseInt(conversationId);
 
                 // Đánh dấu tất cả tin nhắn chưa đọc thành READ
                 const unreadMessages = await markMessagesAsRead(conversationId, userId);
@@ -209,13 +227,19 @@ export const registerChatHandlers = () => {
         // Leave conversation room
         socket.on('chat:leave_conversation', (conversationId) => {
             socket.leave(`conversation_${conversationId}`);
-            console.log(`User ${userId} left conversation ${conversationId}`);
+            // Leave phòng active tương ứng
+            socket.leave(`active_conversation_${conversationId}`);
+            if (socket.data.activeConversationId === parseInt(conversationId)) {
+                delete socket.data.activeConversationId;
+                
+            }
+            
         });
 
         // Send message
         socket.on('chat:send_message', async (data) => {
             try {
-                const { conversationId, content, type = 'TEXT', replyToId } = data;
+                 const { conversationId, content, type = 'TEXT', replyToId, mediaUrl, mediaType } = data;
 
                 // Check if user has access to conversation
                 const hasAccess = await checkConversationAccess(userId, conversationId);
@@ -228,7 +252,8 @@ export const registerChatHandlers = () => {
                 const message = await createMessageWithStates(conversationId, userId, {
                     type,
                     content,
-                    replyToId
+                    replyToId,
+                    mediaUrl
                 });
 
                 // Emit to all members in conversation
@@ -255,12 +280,11 @@ export const registerChatHandlers = () => {
                     }
                 });
 
-                // Lấy danh sách socket IDs trong phòng conversation
-                const roomName = `conversation_${conversationId}`;
+                // Lấy danh sách socket IDs trong phòng active conversation
+                const roomName = `active_conversation_${conversationId}`;
                 const socketsInRoom = io.sockets.adapter.rooms.get(roomName) || new Set();
                 const socketIdsInRoom = [...socketsInRoom];
-                
-                // Lấy danh sách user IDs đang trong phòng conversation
+                // Lấy danh sách user IDs đang ở phòng active conversation
                 const userIdsInRoom = [];
                 for (const socketId of socketIdsInRoom) {
                     const socket = io.sockets.sockets.get(socketId);
@@ -269,7 +293,6 @@ export const registerChatHandlers = () => {
                     }
                 }
                 
-                console.log(`Users in conversation ${conversationId}:`, userIdsInRoom);
                 
                 conversationMembers.forEach(member => {
                     io.to(`user_${member.userId}`).emit('notification', {
@@ -286,12 +309,9 @@ export const registerChatHandlers = () => {
                         }
                     });
                     
-                    // Kiểm tra xem người nhận có đang trong đoạn chat không
-                    const isRecipientInConversation = userIdsInRoom.includes(member.userId);
-                    
-                    if (isRecipientInConversation) {
-                        // Nếu người nhận đang trong đoạn chat, đánh dấu tin nhắn là READ ngay lập tức
-                        console.log(`User ${member.userId} is in conversation ${conversationId}, marking message as READ`);
+                    // Kiểm tra xem người nhận có đang ở phòng active conversation không
+                    const isRecipientActive = userIdsInRoom.includes(member.userId);
+                    if (isRecipientActive) {
                         
                         // Cập nhật MessageState thành READ
                         prisma.messageState.updateMany({
@@ -321,15 +341,7 @@ export const registerChatHandlers = () => {
                     }
                 });
 
-                // Emit conversation update to all members to refresh sidebar
-                const allConversationMembers = await getConversationMembers(conversationId);
-
-                allConversationMembers.forEach(member => {
-                    io.to(`user_${member.userId}`).emit('chat:conversation_updated', {
-                        conversationId,
-                        action: 'update'
-                    });
-                });
+                await emitConversationUpdate(io, conversationId, 'update');
 
             } catch (error) {
                 console.error('Error sending message:', error);
@@ -420,14 +432,7 @@ export const registerChatHandlers = () => {
                     conversationId: message.conversationId
                 });
 
-                // Refresh preview tin nhắn cuối cùng
-                const allConversationMembers = await getConversationMembers(message.conversationId);
-                allConversationMembers.forEach(member => {
-                    io.to(`user_${member.userId}`).emit('chat:conversation_updated', {
-                        conversationId: message.conversationId,
-                        action: 'update'
-                    });
-                });
+                await emitConversationUpdate(io, message.conversationId, 'update');
 
             } catch (error) {
                 console.error('Error editing message:', error);
@@ -466,13 +471,13 @@ export const registerChatHandlers = () => {
         // Handle message seen - chuyển từ DELIVERED thành READ từ mới nhất đổ về trước
         socket.on('message:seen', async (data) => {
             try {
-                console.log('Received message:seen event:', data);
+                
                 const { conversationId, userId: viewerId } = data;
                 
                 // Verify user has access to conversation
                 const hasAccess = await checkConversationAccess(viewerId, conversationId);
                 if (!hasAccess) {
-                    console.log('User has no access to conversation');
+                    
                     socket.emit('error', { message: 'No access to conversation' });
                     return;
                 }
@@ -503,7 +508,7 @@ export const registerChatHandlers = () => {
                         });
                     });
 
-                    console.log(`User ${viewerId} marked ${unreadMessages.length} messages as read in conversation ${conversationId}`);
+                    
                 }
 
             } catch (error) {
@@ -580,9 +585,84 @@ export const registerChatHandlers = () => {
                     notifyUserStatus(io, conversationId, userId, false);
                 });
 
-                console.log(`User ${userId} disconnected from chat`);
+                
             } catch (error) {
                 console.error('Error handling disconnect:', error);
+            }
+        });
+
+        // Handle leave group
+        socket.on('chat:leave_group', async (data) => {
+            try {
+                const { conversationId } = data;
+                const userId = socket.handshake.auth?.userId;
+
+
+                // Kiểm tra xem user có trong group không
+                const member = await prisma.conversationMember.findFirst({
+                    where: {
+                        conversationId: parseInt(conversationId),
+                        userId: userId,
+                        leftAt: null
+                    },
+                    include: {
+                        user: {
+                            select: {
+                                id: true,
+                                username: true,
+                                fullName: true
+                            }
+                        }
+                    }
+                });
+
+                if (!member) {
+                    socket.emit('chat:error', {
+                        message: 'Bạn không có trong nhóm này'
+                    });
+                    return;
+                }
+
+                // Cập nhật leftAt để đánh dấu member đã rời
+                await prisma.conversationMember.update({
+                    where: {
+                        conversationId_userId: {
+                            conversationId: parseInt(conversationId),
+                            userId: userId
+                        }
+                    },
+                    data: {
+                        leftAt: new Date()
+                    }
+                });
+
+                // Tạo tin nhắn hệ thống
+                const systemMessage = await createSystemMessage(conversationId, 'MEMBER_LEFT', {
+                    userName: member.user.fullName || member.user.username
+                });
+
+                // Emit tin nhắn hệ thống cho tất cả thành viên
+                io.to(`conversation_${conversationId}`).emit('chat:new_message', {
+                    message: systemMessage,
+                    conversationId: parseInt(conversationId)
+                });
+
+                // Rời khỏi phòng socket
+                socket.leave(`conversation_${conversationId}`);
+
+                // Emit conversation update để cập nhật sidebar
+                io.to(`user_${userId}`).emit('chat:conversation_updated', {
+                    conversationId: parseInt(conversationId),
+                    action: 'delete'
+                });
+
+                
+
+            } catch (error) {
+                console.error('Error leaving group:', error);
+                socket.emit('chat:error', {
+                    message: 'Có lỗi xảy ra khi rời nhóm'
+                });
             }
         });
 
@@ -591,8 +671,6 @@ export const registerChatHandlers = () => {
             try {
                 const { conversationId, memberIds } = data;
                 const userId = socket.handshake.auth?.userId;
-
-                console.log(`User ${userId} adding members to conversation ${conversationId}:`, memberIds);
 
                 // Kiểm tra quyền admin
                 const conversation = await prisma.conversation.findFirst({
@@ -636,25 +714,53 @@ export const registerChatHandlers = () => {
                     return;
                 }
 
-                // Kiểm tra xem các user đã có trong group chưa
+                // Kiểm tra xem các user đã có trong group chưa (kể cả đã rời nhóm)
                 const existingMembers = await prisma.conversationMember.findMany({
                     where: {
                         conversationId: parseInt(conversationId),
-                        userId: { in: memberIds.map(id => parseInt(id)) },
-                        leftAt: null
+                        userId: { in: memberIds.map(id => parseInt(id)) }
                     }
                 });
 
-                if (existingMembers.length > 0) {
+                // Phân loại: active members và left members
+                const activeMembers = existingMembers.filter(member => member.leftAt === null);
+                const leftMembers = existingMembers.filter(member => member.leftAt !== null);
+                
+                const activeUserIds = activeMembers.map(member => member.userId);
+                const leftUserIds = leftMembers.map(member => member.userId);
+                const newMemberIds = memberIds.filter(id => !existingMembers.map(m => m.userId).includes(parseInt(id)));
+
+                // Update lại leftAt = null cho user đã rời nhóm
+                if (leftUserIds.length > 0) {
+                    await prisma.conversationMember.updateMany({
+                        where: {
+                            conversationId: parseInt(conversationId),
+                            userId: { in: leftUserIds.map(id => parseInt(id)) }
+                        },
+                        data: {
+                            leftAt: null,
+                            joinedAt: new Date()
+                        }
+                    });
+                }
+
+                if (newMemberIds.length === 0 && leftUserIds.length === 0) {
                     socket.emit('chat:error', {
-                        message: 'Một số người đã có trong nhóm'
+                        message: 'Tất cả người được chọn đã có trong nhóm'
                     });
                     return;
                 }
 
-                // Thêm thành viên vào group
+                // Thông báo nếu có một số người đã có trong nhóm
+                if (activeUserIds.length > 0) {
+                    socket.emit('chat:warning', {
+                        message: `${activeUserIds.length} người đã có trong nhóm, chỉ thêm ${newMemberIds.length + leftUserIds.length} người mới`
+                    });
+                }
+
+                // Thêm thành viên mới vào group
                 const newMembers = await prisma.conversationMember.createMany({
-                    data: memberIds.map(memberId => ({
+                    data: newMemberIds.map(memberId => ({
                         conversationId: parseInt(conversationId),
                         userId: parseInt(memberId),
                         role: 'MEMBER',
@@ -662,11 +768,12 @@ export const registerChatHandlers = () => {
                     }))
                 });
 
-                // Lấy thông tin chi tiết của các thành viên mới
+                // Lấy thông tin chi tiết của các thành viên mới (bao gồm cả rejoin)
+                const allAddedMemberIds = [...newMemberIds, ...leftUserIds];
                 const addedMembers = await prisma.conversationMember.findMany({
                     where: {
                         conversationId: parseInt(conversationId),
-                        userId: { in: memberIds.map(id => parseInt(id)) },
+                        userId: { in: allAddedMemberIds.map(id => parseInt(id)) },
                         leftAt: null
                     },
                     include: {
@@ -683,28 +790,33 @@ export const registerChatHandlers = () => {
                     }
                 });
 
-                // Emit event cho tất cả thành viên trong group
-                const allMembers = await getConversationMembers(conversationId);
-                allMembers.forEach(member => {
-                    io.to(`user_${member.userId}`).emit('chat:members_added', {
-                        conversationId: parseInt(conversationId),
-                        addedMembers: addedMembers.map(m => ({
-                            id: m.user.id,
-                            username: m.user.username,
-                            fullName: m.user.fullName,
-                            avatarUrl: m.user.avatarUrl,
-                            role: m.role,
-                            joinedAt: m.joinedAt
-                        })),
-                        addedBy: {
-                            id: userId,
-                            username: socket.user?.username,
-                            fullName: socket.user?.fullName
-                        }
-                    });
+                // Lấy thông tin người thêm thành viên
+                const addedByUser = await prisma.user.findUnique({
+                    where: { id: userId },
+                    select: {
+                        id: true,
+                        username: true,
+                        fullName: true
+                    }
                 });
 
-                console.log(`Added ${newMembers.count} members to conversation ${conversationId}`);
+                // Tạo tin nhắn hệ thống cho từng thành viên được thêm
+                for (const member of addedMembers) {
+                    const systemMessage = await createSystemMessage(conversationId, 'MEMBER_ADDED', {
+                        addedBy: addedByUser.fullName || addedByUser.username,
+                        memberName: member.user.fullName || member.user.username
+                    });
+
+                    // Emit tin nhắn hệ thống cho tất cả thành viên
+                    io.to(`conversation_${conversationId}`).emit('chat:new_message', {
+                        message: systemMessage,
+                        conversationId: parseInt(conversationId)
+                    });
+                }
+
+                await emitConversationUpdate(io, conversationId, 'update');
+
+                
 
             } catch (error) {
                 console.error('Error adding members:', error);
@@ -712,6 +824,77 @@ export const registerChatHandlers = () => {
                     message: 'Có lỗi xảy ra khi thêm thành viên'
                 });
             }
+        });
+
+        socket.on('chat:remove_member', async (data) => {
+            try {
+                const { conversationId, userId: memberIdToRemove } = data;
+                const currentUserId = socket.handshake.auth?.userId;
+                if (!conversationId || !memberIdToRemove) return;
+                // Lấy thông tin member thực hiện thao tác
+                const currentMember = await prisma.conversationMember.findFirst({
+                  where: {
+                    conversationId: parseInt(conversationId),
+                    userId: currentUserId,
+                    leftAt: null
+                  },
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        username: true,
+                        fullName: true
+                      }
+                    }
+                  }
+                });
+                if (!currentMember || currentMember.role !== 'ADMIN') {
+                  return socket.emit('chat:error', { message: 'Bạn không có quyền xóa thành viên này' });
+                }
+                if (parseInt(memberIdToRemove) === currentUserId) {
+                  return socket.emit('chat:error', { message: 'Không thể tự xóa chính mình' });
+                }
+                // Tìm member bị xóa
+                const member = await prisma.conversationMember.findFirst({
+                  where: {
+                    conversationId: parseInt(conversationId),
+                    userId: parseInt(memberIdToRemove),
+                    leftAt: null
+                  },
+                  include: {
+                    user: true
+                  }
+                });
+                if (!member) {
+                  return socket.emit('chat:error', { message: 'Thành viên không tồn tại hoặc đã rời nhóm' });
+                }
+                await prisma.conversationMember.update({
+                  where: {
+                    conversationId_userId: {
+                      conversationId: parseInt(conversationId),
+                      userId: parseInt(memberIdToRemove),
+                    }
+                  },
+                  data: { leftAt: new Date() }
+                });
+                // System message
+                const systemMessage = await createSystemMessage(conversationId, 'MEMBER_KICKED', {
+                  memberName: member.user.fullName || member.user.username,
+                  kickedByName: currentMember.user.fullName || currentMember.user.username
+                });
+                io.to(`conversation_${conversationId}`).emit('chat:new_message', {
+                  message: systemMessage,
+                  conversationId: parseInt(conversationId)
+                });
+                await emitConversationUpdate(io, conversationId, 'update');
+                
+                io.to(`user_${memberIdToRemove}`).emit('chat:conversation_updated', {
+                    conversationId: parseInt(conversationId),
+                    action: 'delete'
+                });
+              } catch (err) {
+                socket.emit('chat:error', { message: 'Không thể xóa thành viên nhóm' });
+              }
         });
     });
 };

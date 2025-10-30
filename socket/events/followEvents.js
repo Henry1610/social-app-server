@@ -97,7 +97,7 @@ followEvents.on("follow_request_accepted", async ({ actor, targetUserId }) => {
       timestamp: notification.updatedAt || notification.createdAt
     });
 
-    console.log(` Follow accepted notification sent to user_${targetUserId}`);
+    
   } catch (error) {
     console.error(" Error in follow_request_accepted event:", error);
   }
@@ -133,7 +133,7 @@ followEvents.on("follow_request_rejected", async ({ actor, targetUserId }) => {
       timestamp: notification.updatedAt || notification.createdAt
     });
 
-    console.log(`Follow rejected notification sent to user_${targetUserId}`);
+    
   } catch (error) {
     console.error("Error in follow_request_rejected event:", error);
   }
