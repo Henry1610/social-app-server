@@ -1,4 +1,5 @@
 import prisma from "../../utils/prisma.js";
+import { getIO } from "../../config/socket.js";
 import { checkConversationAccess } from "../../services/conversationService.js";
 import {
   checkMessageOwnership,
@@ -317,8 +318,40 @@ export const togglePinMessage = async (req, res) => {
       });
     }
 
-    // Toggle pin message bằng hàm từ service
     const result = await togglePinMessageService(messageId, userId);
+
+    const io = getIO();
+    const pinnedMessage = await prisma.message.findUnique({
+      where: { id: parseInt(messageId) },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            avatarUrl: true,
+          },
+        },
+        pinnedIn: {
+          include: {
+            pinnedBy: {
+              select: {
+                id: true,
+                username: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (pinnedMessage) {
+      io.to(`conversation_${pinnedMessage.conversationId}`).emit('chat:message_pinned', {
+        message: pinnedMessage,
+        action: result.action,
+        conversationId: pinnedMessage.conversationId,
+      });
+    }
 
     res.json({
       success: true,

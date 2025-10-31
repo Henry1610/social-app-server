@@ -116,11 +116,6 @@ export const updateFollowCacheAtomic = async (followerId, followingId, action) =
     throw new Error('Redis transaction failed');
   }
   
-  
-    followerId,
-    followingId
-  });
-  
   return results;
 };
 

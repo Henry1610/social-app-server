@@ -52,7 +52,7 @@ export const getMessagesWithAccess = async (userId, conversationId, options = {}
           },
         },
       },
-      states: true, // Include message states for status indicators
+      states: true,
       editHistory: {
         include: {
           editor: {
@@ -65,6 +65,19 @@ export const getMessagesWithAccess = async (userId, conversationId, options = {}
         },
         orderBy: {
           editedAt: 'asc',
+        },
+      },
+      pinnedIn: {
+        select: {
+          id: true,
+          conversationId: true,
+          pinnedAt: true,
+          pinnedBy: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
         },
       },
       _count: {
