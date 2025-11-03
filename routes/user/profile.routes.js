@@ -2,13 +2,14 @@ import express from 'express';
 import { getPublicProfile } from '../../controllers/user/search.controller.js';
 import { uploadAvatar } from '../../controllers/user/upload.controller.js';
 import { getUserPostsPreview } from '../../controllers/user/post.controller.js';
+import { updatePrivacySettings } from '../../controllers/user/profile.controller.js';
+import { getMe } from '../../controllers/authController.js';
 import { resolveUser } from '../../middlewares/resolveUser.js';
 import { upload } from '../../middlewares/upload.js';
 
 const router = express.Router();
 
-router.get('/:username/profile', resolveUser, getPublicProfile);
-router.get('/:username/posts', resolveUser, getUserPostsPreview);
+router.get('/me', getMe);
 router.post('/avatar', (req, res, next) => {
   upload.single('avatar')(req, res, (err) => {
     if (err) {
@@ -19,5 +20,9 @@ router.post('/avatar', (req, res, next) => {
     next()
   })
 }, uploadAvatar);
+router.put('/privacy', updatePrivacySettings);
+
+router.get('/:username/profile', resolveUser, getPublicProfile);
+router.get('/:username/posts', resolveUser, getUserPostsPreview);
 
 export default router;

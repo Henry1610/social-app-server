@@ -28,7 +28,7 @@ export const createPost = async (req, res) => {
         data: {
           content: content || null,
           user: { connect: { id: userId } },
-          whoCanSee: privacySettings.whoCanSee || 'public',
+          whoCanSee: privacySettings.whoCanSee || 'everyone',
           whoCanComment: privacySettings.whoCanComment || 'everyone',
         },
       });
@@ -182,16 +182,16 @@ export const getMyPostById = async (req, res) => {
 
     // Kiểm tra quyền truy cập dựa trên privacy settings
     if (!isPostOwner) {
-      const whoCanSee = post.whoCanSee || 'public';
+      const whoCanSee = post.whoCanSee || 'everyone';
       
-      if (whoCanSee === 'private') {
+      if (whoCanSee === 'nobody') {
         return res.status(403).json({
           success: false,
           message: 'Bài viết này là riêng tư và chỉ chủ bài viết mới xem được!'
         });
       }
 
-      if (whoCanSee === 'follower') {
+      if (whoCanSee === 'followers') {
         if (!currentUserId) {
           return res.status(403).json({
             success: false,
@@ -398,27 +398,36 @@ export const deletePost = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
 
-    // Soft delete
-    const post = await prisma.post.update({
-      where: { id: Number(id) },
-      data: { deletedAt: new Date() },
-    }).catch(() => null);
+    // Kiểm tra bài viết có tồn tại và thuộc về user
+    const post = await prisma.post.findFirst({
+      where: {
+        id: Number(id),
+        userId: userId,
+        deletedAt: null
+      }
+    });
 
-    if (!post || post.userId !== userId || post.deletedAt === null) {
+    if (!post) {
       return res.status(404).json({
         success: false,
         message: 'Bài viết không tồn tại hoặc không thuộc về bạn!'
       });
     }
 
+    // Soft delete
+    const deletedPost = await prisma.post.update({
+      where: { id: Number(id) },
+      data: { deletedAt: new Date() }
+    });
+
     res.json({
       success: true,
-      message: 'Xóa bài viết thành công (soft delete)',
-      post
+      message: 'Xóa bài viết thành công',
+      post: deletedPost
     });
   } catch (error) {
     console.error('Error deleting post:', error);
-    res.status(500).json({ success: false, message: 'Lỗi server!' });
+    res.status(500).json({ success: false, message: 'Lỗi server khi xóa bài viết!' });
   }
 };
 
@@ -596,9 +605,9 @@ export const getUserPostsPreview = async (req, res) => {
           }
         }
       });
-      whereClause.whoCanSee = isFollowing ? { in: ['public', 'follower'] } : 'public';
+      whereClause.whoCanSee = isFollowing ? { in: ['everyone', 'followers'] } : 'everyone';
     } else if (!isSelf) {
-      whereClause.whoCanSee = 'public';
+      whereClause.whoCanSee = 'everyone';
     }
 
     const posts = await prisma.post.findMany({

@@ -41,6 +41,11 @@ export const getConversations = async (req, res) => {
                 avatarUrl: true,
                 isOnline: true,
                 lastSeen: true,
+                privacySettings: {
+                  select: {
+                    showOnlineStatus: true,
+                  },
+                },
               },
             },
           },
@@ -335,6 +340,12 @@ export const getConversationMembers = async (req, res) => {
             username: true,
             fullName: true,
             avatarUrl: true,
+            privacySettings: {
+              select: {
+                whoCanMessage: true,
+                showOnlineStatus: true,
+              },
+            },
           },
         },
       },

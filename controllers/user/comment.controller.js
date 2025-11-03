@@ -114,7 +114,7 @@ export const commentPost = async (req, res) => {
       case "everyone":
         break;
 
-      case "follower":
+      case "followers":
         const isFollower = await prisma.follow.findFirst({
           where: {
             followerId: userId,
@@ -126,7 +126,7 @@ export const commentPost = async (req, res) => {
         }
         break;
 
-      case "no_one":
+      case "nobody":
         if (postExists.userId !== userId) {
           return res.status(403).json({ success: false, message: "Chỉ chủ post mới được comment" });
         }

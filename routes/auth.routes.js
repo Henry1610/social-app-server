@@ -1,7 +1,7 @@
 import express from "express";
 import passport from "passport";
 import { sendOtpLimiter, resetPasswordRequestLimiter } from "../middlewares/rateLimiters.js";
-import { sendOtp, verifyOtpAndRegister, login, refreshToken, changePassword, requestResetPassword, resetPassword, logout, getMe, facebookCallback, getSessionAuth } from "../controllers/authController.js";
+import { sendOtp, verifyOtpAndRegister, login, refreshToken, changePassword, requestResetPassword, resetPassword, logout, facebookCallback, getSessionAuth } from "../controllers/authController.js";
 import { authenticate } from "../middlewares/authenticate.js";
 import { authorize } from "../middlewares/authorize.js";
 const router = express.Router();
@@ -18,6 +18,5 @@ router.post("/change-password", changePassword);
 router.post('/forgot-password', resetPasswordRequestLimiter, requestResetPassword);
 router.post('/reset-password', resetPassword);
 router.post('/logout', logout);
-router.get('/me', authenticate,authorize('user'), getMe);
 
 export default router;

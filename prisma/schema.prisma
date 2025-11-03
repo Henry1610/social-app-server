@@ -41,18 +41,6 @@ enum PrivacyOption {
   nobody
 }
 
-enum PostVisibility {
-  public
-  private
-  follower
-}
-
-enum PostCommentPermission {
-  everyone
-  no_one
-  follower
-}
-
 enum TargetType {
   POST
   COMMENT
@@ -152,8 +140,8 @@ model UserPrivacySetting {
   isPrivate            Boolean       @default(false) @map("is_private")
   whoCanMessage        PrivacyOption @default(everyone) @map("who_can_message")
   whoCanTagMe          PrivacyOption @default(everyone) @map("who_can_tag_me")
-  whoCanFindByUsername Boolean       @default(true) @map("who_can_find_by_username")
-  showOnlineStatus     Boolean       @default(true) @map("show_online_status")
+  whoCanFindByUsername PrivacyOption @default(everyone) @map("who_can_find_by_username")
+  showOnlineStatus      Boolean       @default(true) @map("show_online_status")
   createdAt            DateTime      @default(now()) @map("created_at")
   updatedAt            DateTime      @updatedAt @map("updated_at")
 
@@ -190,11 +178,11 @@ model PasswordReset {
 }
 
 model Post {
-  id            Int                   @id @default(autoincrement())
-  userId        Int                   @map("user_id")
-  content       String?               @db.Text
-  whoCanSee     PostVisibility        @default(public)
-  whoCanComment PostCommentPermission @default(everyone)
+  id            Int           @id @default(autoincrement())
+  userId        Int           @map("user_id")
+  content       String?       @db.Text
+  whoCanSee     PrivacyOption @default(everyone)
+  whoCanComment PrivacyOption @default(everyone)
   createdAt     DateTime              @default(now()) @map("created_at")
   updatedAt     DateTime              @updatedAt @map("updated_at")
   deletedAt     DateTime?             @map("deleted_at")
