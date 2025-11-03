@@ -1,4 +1,5 @@
 import prisma from "../../utils/prisma.js";
+import { postEvents } from "../../socket/events/postEvents.js";
 
 // GET api/user/comments/posts/:id 
 export const getCommentsByPost = async (req, res) => {
@@ -97,9 +98,6 @@ export const commentPost = async (req, res) => {
       where: {
         id: Number(id),
         deletedAt: null
-      },
-      include: {
-        privacySettings: true,
       }
     });
     if (!postExists) {
@@ -108,35 +106,34 @@ export const commentPost = async (req, res) => {
         message: 'Bài viết không tồn tại hoặc đã bị xóa!'
       });
     }
-    const privacy = postExists.privacySettings;
 
     // Kiểm tra quyền bình luận dựa trên cài đặt quyền riêng tư của bài viết
-    if (privacy) {
-      switch (privacy.whoCanComment) {
-        case "public":
-          break;
+    const whoCanComment = postExists.whoCanComment || 'everyone';
+    
+    switch (whoCanComment) {
+      case "everyone":
+        break;
 
-        case "follower":
-          const isFollower = await prisma.follow.findFirst({
-            where: {
-              followerId: userId,
-              followingId: postExists.userId,
-            },
-          });
-          if (!isFollower) {
-            return res.status(403).json({ success: false, message: "Chỉ follower mới được comment" });
-          }
-          break;
+      case "follower":
+        const isFollower = await prisma.follow.findFirst({
+          where: {
+            followerId: userId,
+            followingId: postExists.userId,
+          },
+        });
+        if (!isFollower) {
+          return res.status(403).json({ success: false, message: "Chỉ follower mới được comment" });
+        }
+        break;
 
-        case "only_me":
-          if (postExists.userId !== userId) {
-            return res.status(403).json({ success: false, message: "Chỉ chủ post mới được comment" });
-          }
-          break;
+      case "no_one":
+        if (postExists.userId !== userId) {
+          return res.status(403).json({ success: false, message: "Chỉ chủ post mới được comment" });
+        }
+        break;
 
-        default:
-          return res.status(400).json({ success: false, message: "Cấu hình quyền comment không hợp lệ" });
-      }
+      default:
+        return res.status(400).json({ success: false, message: "Cấu hình quyền comment không hợp lệ" });
     }
     // Tạo bình luận mới
     const newComment = await prisma.comment.create({
@@ -158,7 +155,19 @@ export const commentPost = async (req, res) => {
       }
     });
 
-    emitNewComment(Number(id), newComment);
+    // Emit event để tạo thông báo (event handler sẽ xử lý)
+    if (postExists.userId !== userId) {
+      postEvents.emit("comment_created", {
+        actor: {
+          id: userId,
+          username: newComment.user.username,
+          fullName: newComment.user.fullName,
+          avatarUrl: newComment.user.avatarUrl
+        },
+        postId: Number(id)
+      });
+    }
+
     res.status(201).json({
       success: true,
       message: 'Bình luận đã được thêm!',
@@ -209,8 +218,6 @@ export const editComment = async (req, res) => {
         }
       }
     });
-    emitCommentUpdate(commentExists.postId, updatedComment)
-
     res.json({
       success: true,
       message: 'Bình luận đã được cập nhật!',
@@ -249,8 +256,6 @@ export const deleteComment = async (req, res) => {
       where: { id: Number(id) },
       data: { deletedAt: new Date() }
     });
-    emitCommentDelete(commentExists.postId, commentExists.id)
-
     res.json({
       success: true,
       message: 'Bình luận đã được xóa!'

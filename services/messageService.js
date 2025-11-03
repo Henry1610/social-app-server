@@ -42,16 +42,6 @@ export const getMessagesWithAccess = async (userId, conversationId, options = {}
           },
         },
       },
-      reactions: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              username: true,
-            },
-          },
-        },
-      },
       states: true,
       editHistory: {
         include: {
@@ -78,11 +68,6 @@ export const getMessagesWithAccess = async (userId, conversationId, options = {}
               username: true,
             },
           },
-        },
-      },
-      _count: {
-        select: {
-          reactions: true,
         },
       },
     },
@@ -204,16 +189,6 @@ export const createMessageWithStates = async (conversationId, senderId, messageD
           },
         },
       },
-      reactions: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              username: true,
-            },
-          },
-        },
-      },
     },
   });
 
@@ -241,54 +216,6 @@ export const markMessageAsRead = async (messageId, userId) => {
 };
 
 
-export const toggleMessageReaction = async (messageId, userId, emoji) => {
-  // Kiểm tra reaction đã tồn tại chưa
-  const existingReaction = await prisma.messageReaction.findUnique({
-    where: {
-      messageId_userId: {
-        messageId: parseInt(messageId),
-        userId,
-      },
-    },
-  });
-
-  if (existingReaction) {
-    // Nếu reaction đã tồn tại và cùng emoji thì xóa, khác emoji thì cập nhật
-    if (existingReaction.emoji === emoji) {
-      await prisma.messageReaction.delete({
-        where: {
-          messageId_userId: {
-            messageId: parseInt(messageId),
-            userId,
-          },
-        },
-      });
-      return { action: 'removed', emoji };
-    } else {
-      // Cập nhật reaction khác
-      await prisma.messageReaction.update({
-        where: {
-          messageId_userId: {
-            messageId: parseInt(messageId),
-            userId,
-          },
-        },
-        data: { emoji },
-      });
-      return { action: 'updated', emoji };
-    }
-  } else {
-    // Tạo reaction mới
-    await prisma.messageReaction.create({
-      data: {
-        messageId: parseInt(messageId),
-        userId,
-        emoji,
-      },
-    });
-    return { action: 'added', emoji };
-  }
-};
 
 export const togglePinMessage = async (messageId, userId) => {
   const message = await prisma.message.findUnique({

@@ -1,12 +1,24 @@
 import prisma from "../utils/prisma.js";
 import { getUserById } from "./userService.js";
-import {
-  cacheNotification,
-  getCachedNotifications,
-  clearNotificationCache
-} from "./redis/notificationService.js";
 import { formatNotificationMessage } from "../utils/notificationText.js";
-const TIME_WINDOW = 5 * 60 * 1000; // 5 phút
+import { getIO } from "../config/socket.js";
+
+const TIME_WINDOW = 5 * 60 * 1000;
+
+const ACTOR_SELECT = {
+  id: true,
+  username: true,
+  fullName: true,
+  avatarUrl: true
+};
+
+const generateGroupKey = (type, targetType, targetId, now) => {
+  const windowIndex = Math.floor(now.getTime() / TIME_WINDOW);
+  if (targetId != null) {
+    return `${type}_${targetType}_${targetId}_${windowIndex}`;
+  }
+  return `${type}_${targetType}_${windowIndex}`;
+};
 
 export const createNotification = async ({
   userId,
@@ -17,17 +29,10 @@ export const createNotification = async ({
 }) => {
   const now = new Date();
 
-  // Các loại thông báo không gom nhóm
-  const NON_GROUP_TYPES = ["MESSAGE"];
+  const EMIT_ONLY_TYPES = ["MESSAGE"];
+  const INDIVIDUAL_TYPES = ["FOLLOW", "FOLLOW_REQUEST", "FOLLOW_ACCEPTED", "FOLLOW_REJECTED"];
 
-  // Các loại thông báo gom nhóm theo target (bài viết, user, etc.)
-  const GROUP_BY_TARGET_TYPES = ["LIKE", "COMMENT", "REPOST"];
-
-  // Các loại thông báo gom nhóm theo loại (không phân biệt target)
-  const GROUP_BY_TYPE_TYPES = ["FOLLOW", "FOLLOW_REQUEST", "FOLLOW_ACCEPTED", "FOLLOW_REJECTED",];
-
-  if (NON_GROUP_TYPES.includes(type)) {
-    // Không gom nhóm - tạo thông báo riêng biệt
+  if (EMIT_ONLY_TYPES.includes(type)) {
     return await createSingleNotification({
       userId,
       actorId,
@@ -38,9 +43,8 @@ export const createNotification = async ({
     });
   }
 
-  if (GROUP_BY_TARGET_TYPES.includes(type)) {
-    // Gom nhóm theo target (bài viết, comment, etc.)
-    return await createGroupedNotification({
+  if (INDIVIDUAL_TYPES.includes(type)) {
+    return await createIndividualNotification({
       userId,
       actorId,
       type,
@@ -50,19 +54,7 @@ export const createNotification = async ({
     });
   }
 
-  if (GROUP_BY_TYPE_TYPES.includes(type)) {
-    // Gom nhóm theo loại (follow, follow_request)
-    return await createGroupedNotification({
-      userId,
-      actorId,
-      type,
-      targetType,
-      now
-    });
-  }
-
-  // Mặc định: tạo thông báo đơn lẻ
-  return await createSingleNotification({
+  return await createGroupedNotification({
     userId,
     actorId,
     type,
@@ -72,71 +64,213 @@ export const createNotification = async ({
   });
 };
 
-// Tạo thông báo đơn lẻ
-const createSingleNotification = async ({ userId, actorId, type, targetType, targetId, now }) => {
-  const notification = await prisma.notification.create({
-    data: {
-      user: { connect: { id: userId } },
-      actor: { connect: { id: actorId } },
+const emitNotification = (userId, notification) => {
+  try {
+    const io = getIO();
+    const formattedNotification = {
+      ...notification,
+      message: formatNotificationMessage(notification)
+    };
+    io.to(`user_${userId}`).emit('notification', formattedNotification);
+  } catch (error) {
+    console.error('Error emitting notification via socket:', error);
+  }
+};
+
+const createSingleNotification = async ({
+  userId,
+  actorId,
+  type,
+  targetType,
+  targetId,
+  now
+}) => {
+  try {
+    const actor = await prisma.user.findUnique({
+      where: { id: actorId },
+      select: ACTOR_SELECT
+    });
+
+    if (!actor) {
+      console.warn(`Actor not found: ${actorId}`);
+      return null;
+    }
+
+    const notification = {
+      userId,
+      actorId,
       type,
       targetType,
       targetId,
-    }
-  });
+      actor,
+      createdAt: now,
+      updatedAt: now
+    };
 
-  await cacheNotification(userId, notification);
-  return notification;
+    emitNotification(userId, notification);
+    return notification;
+  } catch (error) {
+    console.error('Error emitting notification via socket:', error);
+    return null;
+  }
 };
 
-const createGroupedNotification = async ({ userId, actorId, type, targetType, targetId, now }) => {
-  const where = targetId != null
-    ? { userId_type_targetType_targetId: { userId, type, targetType, targetId } }
-    : { userId_type_targetType: { userId, type, targetType } };
-
-  const existing = await prisma.notification.findUnique({ where });
-
-  if (existing) {
-    const isExpired = now - existing.updatedAt > TIME_WINDOW;
-    const metadata = existing.metadata || {};
-    metadata.actorIds = metadata.actorIds || [];
-
-    if (!isExpired) {
-      if (!metadata.actorIds.includes(actorId)) {
-        metadata.actorIds.push(actorId);
-        metadata.count = metadata.actorIds.length;
-        metadata.lastActorName = await getUserById(actorId);
-
-        const updated = await prisma.notification.update({
-          where: { id: existing.id },
-          data: { metadata, updatedAt: now }
-        });
-
-        await cacheNotification(userId, updated);
-        return updated;
+const createIndividualNotification = async ({
+  userId,
+  actorId,
+  type,
+  targetType,
+  targetId,
+  now
+}) => {
+  try {
+    const existing = await prisma.notification.findFirst({
+      where: {
+        userId,
+        type,
+        targetType,
+        targetId: targetId ?? null,
+        groupKey: null
       }
-      return existing;
+    });
+
+    let notification;
+
+    if (existing) {
+      notification = await prisma.notification.update({
+        where: { id: existing.id },
+        data: { actorId, updatedAt: now },
+        include: { actor: { select: ACTOR_SELECT } }
+      });
+    } else {
+      try {
+        notification = await prisma.notification.create({
+          data: {
+            user: { connect: { id: userId } },
+            actor: { connect: { id: actorId } },
+            type,
+            targetType,
+            targetId,
+            groupKey: null
+          },
+          include: { actor: { select: ACTOR_SELECT } }
+        });
+      } catch (createError) {
+        if (createError.code === 'P2002') {
+          const existingAfterRetry = await prisma.notification.findFirst({
+            where: {
+              userId,
+              type,
+              targetType,
+              targetId: targetId ?? null,
+              groupKey: null
+            },
+            include: { actor: { select: ACTOR_SELECT } }
+          });
+
+          if (existingAfterRetry) {
+            notification = existingAfterRetry;
+          } else {
+            throw createError;
+          }
+        } else {
+          throw createError;
+        }
+      }
     }
 
-    if (metadata.actorIds.length > 1) {
-      metadata.actorIds = metadata.actorIds.filter(id => id !== actorId);
+    emitNotification(userId, notification);
+
+    return notification;
+  } catch (error) {
+    console.error('Error creating individual notification:', error);
+    throw error;
+  }
+};
+
+const createGroupedNotification = async ({
+  userId,
+  actorId,
+  type,
+  targetType,
+  targetId,
+  now
+}) => {
+  try {
+    const groupKey = generateGroupKey(type, targetType, targetId, now);
+
+    const existing = await prisma.notification.findFirst({
+      where: {
+        userId,
+        type,
+        targetType,
+        targetId: targetId ?? null,
+        groupKey
+      },
+      include: { actor: { select: ACTOR_SELECT } }
+    });
+
+    if (existing) {
+      const timeSinceUpdate = now.getTime() - existing.updatedAt.getTime();
+      const isExpired = timeSinceUpdate > TIME_WINDOW;
+
+      if (isExpired) {
+        return await createNewGroupedNotification({
+          userId,
+          actorId,
+          type,
+          targetType,
+          targetId,
+          now
+        });
+      }
+
+      const metadata = existing.metadata || {};
+      metadata.actorIds = metadata.actorIds || [];
+
+      if (metadata.actorIds.includes(actorId)) {
+        return existing;
+      }
+
+      metadata.actorIds.push(actorId);
       metadata.count = metadata.actorIds.length;
+      metadata.lastActorName = await getUserById(actorId);
 
       const updated = await prisma.notification.update({
         where: { id: existing.id },
-        data: { metadata }
+        data: { metadata, updatedAt: now },
+        include: { actor: { select: ACTOR_SELECT } }
       });
-      await cacheNotification(userId, updated);
-    } else {
-      await prisma.notification.delete({ where: { id: existing.id } });
-      await clearNotificationCache(userId);
-    }
-  }
 
-  const metadata = {
-    actorIds: [actorId],
-    count: 1,
-    lastActorName: await getUserById(actorId)
-  };
+      emitNotification(userId, updated);
+
+      return updated;
+    }
+
+    return await createNewGroupedNotification({
+      userId,
+      actorId,
+      type,
+      targetType,
+      targetId,
+      now
+    });
+  } catch (error) {
+    console.error('Error creating grouped notification:', error);
+    throw error;
+  }
+};
+
+const createNewGroupedNotification = async ({
+  userId,
+  actorId,
+  type,
+  targetType,
+  targetId,
+  now
+}) => {
+  const groupKey = generateGroupKey(type, targetType, targetId, now);
+  const lastActorName = await getUserById(actorId);
 
   const notification = await prisma.notification.create({
     data: {
@@ -145,42 +279,28 @@ const createGroupedNotification = async ({ userId, actorId, type, targetType, ta
       type,
       targetType,
       targetId: targetId ?? null,
-      metadata,
+      groupKey,
+      metadata: {
+        actorIds: [actorId],
+        count: 1,
+        lastActorName: lastActorName
+      },
       updatedAt: now
-    }
+    },
+    include: { actor: { select: ACTOR_SELECT } }
   });
 
-  await cacheNotification(userId, notification);
+  emitNotification(userId, notification);
+
   return notification;
 };
-
-// Hàm lấy thông báo của user (ưu tiên cache Redis)
 export const getUserNotifications = async (userId, page = 1, limit = 20) => {
   try {
-    // Thử lấy từ cache trước
-    const cachedResult = await getCachedNotifications(userId, page, limit);
-
-    if (cachedResult.notifications.length > 0) {
-      // Format luôn cache
-      const formattedCached = cachedResult.notifications.map(n => ({
-        ...n,
-        message: formatNotificationMessage({
-          ...n,
-          actor: n.actor || n.metadata?.lastActorName,
-        }),
-      }));
-
-      return {
-        ...cachedResult,
-        notifications: formattedCached,
-      };
-    }
-
-    // Nếu cache không có, lấy từ database
     const skip = (page - 1) * limit;
 
     const notifications = await prisma.notification.findMany({
       where: { userId },
+      include: { actor: { select: ACTOR_SELECT } },
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit
@@ -189,11 +309,13 @@ export const getUserNotifications = async (userId, page = 1, limit = 20) => {
     const total = await prisma.notification.count({
       where: { userId }
     });
-    const formatted = notifications.map(n => ({
 
+    const formatted = notifications.map(n => ({
+      ...n,
       message: formatNotificationMessage(n),
     }));
-    const result = {
+
+    return {
       notifications: formatted,
       pagination: {
         page,
@@ -202,15 +324,6 @@ export const getUserNotifications = async (userId, page = 1, limit = 20) => {
         pages: Math.ceil(total / limit)
       }
     };
-
-    // Cache kết quả để lần sau sử dụng
-    if (notifications.length > 0) {
-      notifications.forEach(notification => {
-        cacheNotification(userId, notification);
-      });
-    }
-
-    return result;
   } catch (error) {
     console.error('Error getting user notifications:', error);
     throw error;

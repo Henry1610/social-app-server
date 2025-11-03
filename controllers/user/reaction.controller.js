@@ -1,4 +1,5 @@
 import prisma from "../../utils/prisma.js";
+import { postEvents } from "../../socket/events/postEvents.js";
 
 // POST /api/user/reactions
 export const createOrUpdateReaction = async (req, res) => {
@@ -6,11 +7,28 @@ export const createOrUpdateReaction = async (req, res) => {
     const userId = req.user.id;
 
     try {
+        if (!targetId || !targetType) {
+            return res.status(400).json({ message: "targetId và targetType là bắt buộc" });
+        }
+
+        const reactionType = type ? type.toUpperCase() : 'LIKE';
+        const validReactionTypes = ['LIKE', 'LOVE', 'HAHA', 'WOW', 'SAD', 'ANGRY'];
+        
+        if (!validReactionTypes.includes(reactionType)) {
+            return res.status(400).json({ message: `Reaction type không hợp lệ. Chỉ chấp nhận: ${validReactionTypes.join(', ')}` });
+        }
+
+        const targetTypeUpper = targetType.toUpperCase();
+        
+        if (targetTypeUpper === 'POST' && reactionType !== 'LIKE') {
+            return res.status(400).json({ message: "Post chỉ hỗ trợ reaction type LIKE" });
+        }
+
         let reaction = await prisma.reaction.findUnique({
             where: {
                 userId_targetType_targetId: {
                     userId: Number(userId),
-                    targetType,
+                    targetType: targetType.toUpperCase(),
                     targetId: Number(targetId),
                 },
             },
@@ -22,17 +40,34 @@ export const createOrUpdateReaction = async (req, res) => {
                 data: {
                     userId: Number(userId),
                     targetId: Number(targetId),
-                    targetType,
-                    type,
+                    targetType: targetType.toUpperCase(),
+                    reactionType: reactionType,
                 },
+                include: {
+                    user: {
+                        select: { id: true, username: true, fullName: true, avatarUrl: true }
+                    }
+                }
             });
-        } else if (reaction.type === type) {
+
+            // Emit event để tạo thông báo (event handler sẽ xử lý)
+            postEvents.emit("reaction_created", {
+                actor: {
+                    id: reaction.user.id,
+                    username: reaction.user.username,
+                    fullName: reaction.user.fullName,
+                    avatarUrl: reaction.user.avatarUrl
+                },
+                targetId: Number(targetId),
+                targetType: targetTypeUpper
+            });
+        } else if (reaction.reactionType === reactionType) {
             // Đã có cùng loại → toggle (xóa)
             await prisma.reaction.delete({
                 where: {
                     userId_targetType_targetId: {
                         userId: Number(userId),
-                        targetType,
+                        targetType: targetType.toUpperCase(),
                         targetId: Number(targetId),
                     },
                 },
@@ -44,18 +79,18 @@ export const createOrUpdateReaction = async (req, res) => {
                 where: {
                     userId_targetType_targetId: {
                         userId: Number(userId),
-                        targetType,
+                        targetType: targetType.toUpperCase(),
                         targetId: Number(targetId),
                     },
                 },
-                data: { type },
+                data: { reactionType: reactionType },
             });
         }
 
         res.status(200).json(reaction);
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Internal server error" });
+        console.error("Error in createOrUpdateReaction:", error);
+        res.status(500).json({ message: "Internal server error", error: error.message });
     }
 };
 // DELETE  /api/user/reactions/:id
@@ -94,9 +129,9 @@ export const getReactionSummary = async (req, res) => {
     const { targetId, targetType } = req.query;
     try {
         const summary = await prisma.reaction.groupBy({
-            by: ['type'],
+            by: ['reactionType'],
             where: { targetId: Number(targetId), targetType },
-            _count: { type: true },
+            _count: { reactionType: true },
         });
         res.status(200).json(summary);
     } catch (error) {
@@ -109,12 +144,22 @@ export const getMyReaction = async (req, res) => {
     const { targetId, targetType } = req.query;
     const userId = req.user.id;
     try {
+        if (!targetId || !targetType) {
+            return res.status(400).json({ message: "targetId và targetType là bắt buộc" });
+        }
+
         const reaction = await prisma.reaction.findUnique({
-            where: { userId_targetId_targetType: { userId, targetId: Number(targetId), targetType } }
+            where: { 
+                userId_targetType_targetId: { 
+                    userId: Number(userId), 
+                    targetType: targetType.toUpperCase(), 
+                    targetId: Number(targetId) 
+                } 
+            }
         });
         res.status(200).json(reaction);
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Internal server error" });
+        console.error("Error in getMyReaction:", error);
+        res.status(500).json({ message: "Internal server error", error: error.message });
     }
 }

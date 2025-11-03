@@ -12,8 +12,6 @@ import {
   getMessages,
   deleteMessage,
   getMessageStates,
-  toggleMessageReaction,
-  getMessageReactions,
   getMessageEditHistory,
   togglePinMessage,
   getPinnedMessages,
@@ -47,10 +45,6 @@ router.post('/uploads', (req, res, next) => {
 
 // Message state routes
 router.get('/messages/:messageId/states', getMessageStates);
-
-// Message reaction routes
-router.post('/messages/:messageId/reactions', toggleMessageReaction);
-router.get('/messages/:messageId/reactions', getMessageReactions);
 
 // Message edit history routes
 router.get('/messages/:messageId/edit-history', getMessageEditHistory);

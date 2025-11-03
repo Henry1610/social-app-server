@@ -5,7 +5,7 @@ export const formatNotificationMessage = (notification) => {
   // Nếu có metadata (thông báo đã gom nhóm)
   if (metadata && metadata.count > 1) {
     const { count, lastActorName, actorIds } = metadata;
-    const actorName = actor?.username || lastActorName || 'Someone';
+    const actorName = actor?.username || lastActorName;
     
     switch (type) {
       case 'FOLLOW':
@@ -15,7 +15,7 @@ export const formatNotificationMessage = (notification) => {
           return `${actorName} và ${count - 1} người khác đã theo dõi bạn.`;
         }
         
-      case 'LIKE':
+      case 'REACTION':
         if (count === 2) {
           return `${actorName} và 1 người khác đã thích bài viết của bạn.`;
         } else {
@@ -49,13 +49,13 @@ export const formatNotificationMessage = (notification) => {
   }
   
   // Thông báo đơn lẻ
-  const actorName = actor?.username || 'Someone';
+  const actorName = actor?.username;
   
   switch (type) {
     case 'FOLLOW':
       return `${actorName} đã theo dõi bạn.`;
       
-    case 'LIKE':
+    case 'REACTION':
       return `${actorName} đã thích bài viết của bạn.`;
       
     case 'COMMENT':

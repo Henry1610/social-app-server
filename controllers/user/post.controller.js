@@ -1,3 +1,4 @@
+import { log } from "console";
 import prisma from "../../utils/prisma.js";
 
 /*---------------------------------POST---------------------------------*/
@@ -11,7 +12,6 @@ export const createPost = async (req, res) => {
       mentions = [],
       privacySettings = {}
     } = req.body;
-    
     const userId = req.user.id;
 
     if ((!content || content.trim() === '') && mediaUrls.length === 0) {
@@ -28,15 +28,8 @@ export const createPost = async (req, res) => {
         data: {
           content: content || null,
           user: { connect: { id: userId } },
-        },
-      });
-
-      // 2. Tạo privacy settings
-      await tx.postPrivacySetting.create({
-        data: {
-          postId: createdPost.id,
-          whoCanSee: privacySettings.whoCanSee ,
-          whoCanComment: privacySettings.whoCanComment ,
+          whoCanSee: privacySettings.whoCanSee || 'public',
+          whoCanComment: privacySettings.whoCanComment || 'everyone',
         },
       });
 
@@ -83,7 +76,7 @@ export const createPost = async (req, res) => {
             userId: u.id,
             actorId: userId,
             type: 'mention',
-            targetType: 'post',
+            targetType: 'POST',
             targetId: createdPost.id,
             isRead: false,
           }));
@@ -98,18 +91,40 @@ export const createPost = async (req, res) => {
     const completePost = await prisma.post.findUnique({
       where: { id: post.id },
       include: {
-        user: { select: { id: true, username: true, fullName: true, avatarUrl: true } },
+        user: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            avatarUrl: true,
+          },
+        },
         media: true,
-        hashtags: { include: { hashtag: true } },
-        mentions: { include: { user: { select: { id: true, username: true, fullName: true } } } },
-        privacySettings: true,
-        _count: { select: {
-           //reactions: true,
+        hashtags: {
+          include: {
+            hashtag: true,
+          },
+        },
+        mentions: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                fullName: true,
+              },
+            },
+          },
+        },
+        _count: {
+          select: {
             comments: true,
-             reposts: true
-           } },
+            reposts: true,
+          },
+        },
       },
     });
+
 
     res.json({
       success: true,
@@ -126,61 +141,15 @@ export const createPost = async (req, res) => {
   }
 };
 
-// GET /api/user/posts
-export const getAllMyPosts = async (req, res) => {
-  try {
-    const userId = req.user?.id;
-    const { page = 1, limit = 10 } = req.query;
-    const skip = (page - 1) * limit;
-
-    const posts = await prisma.post.findMany({
-      where: { userId: userId, deletedAt: null },
-      include: {
-        user: {
-          select: { id: true, username: true, fullName: true, avatarUrl: true }
-        },
-        media: {
-          select: { id: true, mediaUrl: true, mediaType: true }
-        },
-        hashtags: {
-          include: { hashtag: { select: { id: true, name: true } } }
-        },
-        mentions: {
-          include: {
-            user: { select: { id: true, username: true, fullName: true } }
-          }
-        },
-        privacySettings: true,
-        _count: { select: { reactions: true, comments: true, reposts: true } }
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: parseInt(limit)
-    });
-
-    res.json({ success: true, posts, page: parseInt(page), limit: parseInt(limit) });
-  } catch (error) {
-    console.error('Error getAllMyPosts:', error);
-    res.status(500).json({ success: false, message: 'Lỗi server!' });
-  }
-};
-
 // GET /api/user/posts/:id
 export const getMyPostById = async (req, res) => {
   try {
     const { id } = req.params;
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: 'Bạn cần đăng nhập để thực hiện thao tác này!'
-      });
-    }
+    const currentUserId = req.user?.id || null;
 
     const post = await prisma.post.findFirst({
       where: {
         id: Number(id),
-        userId: userId,
         deletedAt: null
       },
       include: {
@@ -198,8 +167,7 @@ export const getMyPostById = async (req, res) => {
             user: { select: { id: true, username: true, fullName: true } }
           }
         },
-        privacySettings: true,
-        _count: { select: { reactions: true, comments: true, reposts: true } }
+        _count: { select: { comments: true, reposts: true } }
       },
     });
 
@@ -210,9 +178,53 @@ export const getMyPostById = async (req, res) => {
       });
     }
 
+    const isPostOwner = post.userId === currentUserId;
+
+    // Kiểm tra quyền truy cập dựa trên privacy settings
+    if (!isPostOwner) {
+      const whoCanSee = post.whoCanSee || 'public';
+      
+      if (whoCanSee === 'private') {
+        return res.status(403).json({
+          success: false,
+          message: 'Bài viết này là riêng tư và chỉ chủ bài viết mới xem được!'
+        });
+      }
+
+      if (whoCanSee === 'follower') {
+        if (!currentUserId) {
+          return res.status(403).json({
+            success: false,
+            message: 'Bạn cần đăng nhập và theo dõi để xem bài viết này!'
+          });
+        }
+
+        const isFollowing = await prisma.follow.findUnique({
+          where: {
+            followerId_followingId: {
+              followerId: currentUserId,
+              followingId: post.userId
+            }
+          }
+        });
+
+        if (!isFollowing) {
+          return res.status(403).json({
+            success: false,
+            message: 'Bạn cần theo dõi để xem bài viết này!'
+          });
+        }
+      }
+    }
+
+    // Get reaction count from Reaction table (only LIKE for posts)
+    const reactionCount = await prisma.reaction.count({
+      where: { targetId: Number(id), targetType: 'POST' },
+    });
+
     // Lấy thêm 10 repost gần nhất
     const reposts = await prisma.repost.findMany({
-      where: { id: Number(id) },
+      where: { postId: Number(id) },
       include: {
         user: {
           select: { id: true, username: true, fullName: true, avatarUrl: true }
@@ -222,7 +234,17 @@ export const getMyPostById = async (req, res) => {
       take: 10
     });
 
-    res.json({ success: true, post: { ...post, reposts } });
+    res.json({ 
+      success: true, 
+      post: { 
+        ...post, 
+        reposts,
+        _count: {
+          ...post._count,
+          reactions: reactionCount,
+        },
+      } 
+    });
   } catch (error) {
     console.error('Error getting post:', error);
     res.status(500).json({
@@ -259,31 +281,27 @@ export const updatePost = async (req, res) => {
 
     // Transaction
     const updatedPost = await prisma.$transaction(async (tx) => {
+      // Prepare update data
+      const updateData = {
+        content: content ?? existingPost.content,
+        updatedAt: new Date()
+      };
+
+      // Privacy settings - update directly on Post model
+      if (privacySettings && Object.keys(privacySettings).length > 0) {
+        if (privacySettings.whoCanSee !== undefined) {
+          updateData.whoCanSee = privacySettings.whoCanSee;
+        }
+        if (privacySettings.whoCanComment !== undefined) {
+          updateData.whoCanComment = privacySettings.whoCanComment;
+        }
+      }
+
       // Update main post
       const post = await tx.post.update({
         where: { id: Number(id) },
-        data: {
-          content: content ?? existingPost.content,
-          updatedAt: new Date()
-        },
+        data: updateData,
       });
-
-      // Privacy settings
-      if (privacySettings && Object.keys(privacySettings).length > 0) {
-        await tx.postPrivacySetting.upsert({
-          where: { postId: post.id },
-          update: {
-            whoCanSee: privacySettings.whoCanSee ?? undefined,
-            whoCanComment: privacySettings.whoCanComment ?? undefined,
-          },
-          create: {
-            whoCanSee: privacySettings.whoCanSee || 'public',
-            whoCanComment: privacySettings.whoCanComment || 'everyone',
-            post: { connect: { id: post.id } }
-          },
-        });
-        
-      }
 
       // Media
       if (mediaUrls !== undefined) {
@@ -331,7 +349,7 @@ export const updatePost = async (req, res) => {
             userId: uid,
             actorId: userId,
             type: 'mention',
-            targetType: 'post',
+            targetType: 'POST',
             targetId: post.id,
             isRead: false,
             createdAt: new Date(),
@@ -343,7 +361,6 @@ export const updatePost = async (req, res) => {
       return post;
     });
 
-    // Get full updated post
     const completePost = await prisma.post.findUnique({
       where: { id: Number(id) },
       include: {
@@ -351,10 +368,15 @@ export const updatePost = async (req, res) => {
         media: true,
         hashtags: { include: { hashtag: true } },
         mentions: { include: { user: { select: { id: true, username: true, fullName: true, avatarUrl: true } } } },
-        privacySettings: true,
-        _count: { select: { reactions: true, comments: true, reposts: true } },
+        _count: { select: { comments: true, reposts: true } },
       },
     });
+
+    const reactionCount = await prisma.reaction.count({
+      where: { targetId: Number(id), targetType: 'POST' },
+    });
+
+    completePost._count.reactions = reactionCount;
 
     res.json({
       success: true,
@@ -405,7 +427,7 @@ export const deletePost = async (req, res) => {
 // POST /api/user/posts/:id/save
 export const savePost = async (req, res) => {
   try {
-    const { id } = req.params;   
+    const { id } = req.params;
     const userId = req.user.id;
     // Check post tồn tại
     const post = await prisma.post.findFirst({
@@ -421,7 +443,7 @@ export const savePost = async (req, res) => {
 
     // Save hoặc bỏ qua nếu đã tồn tại
     const saved = await prisma.savedPost.upsert({
-      where: { userId_postId:{userId: userId, postId: Number(id)}  },
+      where: { userId_postId: { userId: userId, postId: Number(id) } },
       update: {}, // nếu đã có thì không cần update gì
       create: {
         userId: userId,
@@ -470,7 +492,7 @@ export const getMySavedPosts = async (req, res) => {
             include: {
               user: { select: { id: true, username: true, fullName: true, avatarUrl: true } },
               media: true,
-              _count: { select: { reactions: true, comments: true, reposts: true } },
+              _count: { select: { comments: true, reposts: true } },
             },
           },
         },
@@ -483,13 +505,142 @@ export const getMySavedPosts = async (req, res) => {
       }),
     ]);
 
+    // Get reaction counts from Reaction table (only LIKE for posts)
+    const savedPostIds = items.map(item => item.post.id);
+    const savedPostReactionCounts = savedPostIds.length > 0 ? await prisma.reaction.groupBy({
+      by: ['targetId'],
+      where: { targetType: 'POST', targetId: { in: savedPostIds } },
+      _count: { id: true }
+    }) : [];
+    
+    const savedPostReactionCountMap = {};
+    savedPostReactionCounts.forEach(rc => {
+      savedPostReactionCountMap[rc.targetId] = rc._count.id;
+    });
+
+    // Add reaction counts to saved posts
+    const itemsWithReactions = items.map(item => ({
+      ...item,
+      post: {
+        ...item.post,
+        _count: {
+          ...item.post._count,
+          reactions: savedPostReactionCountMap[item.post.id] || 0,
+        },
+      },
+    }));
+
     res.json({
       success: true,
-      items,
+      items: itemsWithReactions,
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     });
   } catch (error) {
     console.error('Error fetching saved posts:', error);
     res.status(500).json({ success: false, message: 'Lỗi server khi lấy bài viết đã lưu!' });
+  }
+};
+
+export const getUserPostsPreview = async (req, res) => {
+  try {
+    const targetUserId = Number(req.resolvedUserId);
+    const currentUserId = req.user?.id || null;
+    const { page = 1, limit = 12 } = req.query;
+    const skip = (page - 1) * limit;
+
+    const targetUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, privacySettings: { select: { isPrivate: true } } }
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({ success: false, message: 'Người dùng không tồn tại!' });
+    }
+
+    const isSelf = targetUserId === currentUserId;
+    const isPrivateAccount = targetUser.privacySettings?.isPrivate;
+
+    if (!isSelf && isPrivateAccount) {
+      if (!currentUserId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Tài khoản này là riêng tư. Bạn cần đăng nhập và theo dõi để xem bài viết!'
+        });
+      }
+
+      const isFollowing = await prisma.follow.findUnique({
+        where: {
+          followerId_followingId: {
+            followerId: currentUserId,
+            followingId: targetUserId
+          }
+        }
+      });
+
+      if (!isFollowing) {
+        return res.status(403).json({
+          success: false,
+          message: 'Tài khoản này là riêng tư. Bạn cần theo dõi để xem bài viết!'
+        });
+      }
+    }
+
+    const whereClause = { userId: targetUserId, deletedAt: null };
+
+    if (!isSelf && currentUserId) {
+      const isFollowing = await prisma.follow.findUnique({
+        where: {
+          followerId_followingId: {
+            followerId: currentUserId,
+            followingId: targetUserId
+          }
+        }
+      });
+      whereClause.whoCanSee = isFollowing ? { in: ['public', 'follower'] } : 'public';
+    } else if (!isSelf) {
+      whereClause.whoCanSee = 'public';
+    }
+
+    const posts = await prisma.post.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        media: { take: 1, select: { mediaUrl: true, mediaType: true } },
+        _count: { select: { comments: true } }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: parseInt(limit)
+    });
+
+    const postIds = posts.map(p => p.id);
+    const reactionCounts = postIds.length > 0 ? await prisma.reaction.groupBy({
+      by: ['targetId'],
+      where: { targetType: 'POST', targetId: { in: postIds } },
+      _count: { id: true }
+    }) : [];
+
+    const reactionCountMap = {};
+    reactionCounts.forEach(rc => {
+      reactionCountMap[rc.targetId] = rc._count.id;
+    });
+
+    const postsWithCounts = posts.map(post => ({
+      id: post.id,
+      previewImage: post.media[0]?.mediaUrl || null,
+      previewMediaType: post.media[0]?.mediaType || null,
+      reactionCount: reactionCountMap[post.id] || 0,
+      commentCount: post._count.comments || 0
+    }));
+
+    res.json({
+      success: true,
+      posts: postsWithCounts,
+      page: parseInt(page),
+      limit: parseInt(limit)
+    });
+  } catch (error) {
+    console.error('Error getUserPostsPreview:', error);
+    res.status(500).json({ success: false, message: 'Lỗi server khi lấy bài viết!' });
   }
 };

@@ -4,7 +4,6 @@ import { checkConversationAccess } from "../../services/conversationService.js";
 import {
   checkMessageOwnership,
   getMessagesWithAccess,
-  toggleMessageReaction as toggleMessageReactionService,
   togglePinMessage as togglePinMessageService,
   getPinnedMessages as getPinnedMessagesService,
 } from "../../services/messageService.js";
@@ -146,45 +145,6 @@ export const getMessageStates = async (req, res) => {
   }
 };
 
-// React tin nhắn (thêm/xóa emoji)
-export const toggleMessageReaction = async (req, res) => {
-  try {
-    const { messageId } = req.params;
-    const { emoji } = req.body;
-    const userId = req.user.id;
-
-    // Kiểm tra quyền truy cập conversation thông qua message
-    const message = await checkMessageOwnership(userId, messageId);
-    if (!message) {
-      return res.status(403).json({
-        success: false,
-        message: 'Bạn không có quyền truy cập cuộc trò chuyện này',
-      });
-    }
-
-    if (!message || message.deletedAt) {
-      return res.status(404).json({
-        success: false,
-        message: 'Không tìm thấy tin nhắn',
-      });
-    }
-
-    // Toggle reaction bằng hàm từ service
-    const result = await toggleMessageReactionService(messageId, userId, emoji);
-
-    res.json({
-      success: true,
-      message: `Đã ${result.action === 'removed' ? 'xóa' : result.action === 'updated' ? 'cập nhật' : 'thêm'} reaction`,
-      data: { action: result.action, emoji: result.emoji },
-    });
-  } catch (error) {
-    console.error('Error toggling message reaction:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Có lỗi xảy ra khi cập nhật reaction',
-    });
-  }
-};
 
 // Lấy lịch sử chỉnh sửa của tin nhắn
 export const getMessageEditHistory = async (req, res) => {
@@ -234,64 +194,6 @@ export const getMessageEditHistory = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Có lỗi xảy ra khi lấy lịch sử chỉnh sửa',
-    });
-  }
-};
-
-// Lấy danh sách reactions của tin nhắn
-export const getMessageReactions = async (req, res) => {
-  try {
-    const { messageId } = req.params;
-    const userId = req.user.id;
-
-    // Tìm tin nhắn và kiểm tra quyền truy cập
-    const message = await prisma.message.findUnique({
-      where: { id: parseInt(messageId) },
-    });
-
-    if (!message || message.deletedAt) {
-      return res.status(404).json({
-        success: false,
-        message: 'Không tìm thấy tin nhắn',
-      });
-    }
-
-    const conversationMember = await prisma.conversationMember.findFirst({
-      where: {
-        conversationId: message.conversationId,
-        userId,
-        leftAt: null,
-      },
-    });
-
-    if (!conversationMember) {
-      return res.status(403).json({
-        success: false,
-        message: 'Bạn không có quyền truy cập cuộc trò chuyện này',
-      });
-    }
-
-    const reactions = await prisma.messageReaction.findMany({
-      where: { messageId: parseInt(messageId) },
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true,
-          },
-        },
-      },
-    });
-
-    res.json({
-      success: true,
-      data: { reactions },
-    });
-  } catch (error) {
-    console.error('Error getting message reactions:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Có lỗi xảy ra khi lấy danh sách reactions',
     });
   }
 };

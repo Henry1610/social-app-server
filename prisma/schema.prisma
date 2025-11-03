@@ -41,11 +41,22 @@ enum PrivacyOption {
   nobody
 }
 
+enum PostVisibility {
+  public
+  private
+  follower
+}
+
+enum PostCommentPermission {
+  everyone
+  no_one
+  follower
+}
+
 enum TargetType {
   POST
   COMMENT
   STORY
-  MESSAGE
   REEL
 }
 
@@ -95,7 +106,7 @@ model User {
   passwordResets          PasswordReset[]
   posts                   Post[]
   comments                Comment[]
-  reactions               Reaction[]
+  ches               Reaction[]
   mentions                Mention[]
   reposts                 Repost[]
   saved_posts             SavedPost[]
@@ -108,7 +119,6 @@ model User {
   // Chat relations
   sentMessages            Message[]            @relation("ChatMessagesSent")
   chatMessageStates       MessageState[]       @relation("ChatMessageStates")
-  chatMessageReactions    MessageReaction[]    @relation("ChatMessageReactions")
   conversationMemberships ConversationMember[] @relation("UserConversationMembers")
   messageEditHistory      MessageEditHistory[] @relation("MessageEditHistory")
   conversationsCreated    Conversation[]       @relation("ConversationCreator")
@@ -180,14 +190,14 @@ model PasswordReset {
 }
 
 model Post {
-  id            Int       @id @default(autoincrement())
-  userId        Int       @map("user_id")
-  content       String?   @db.Text
-  whoCanSee     String    @default("public")
-  whoCanComment String    @default("everyone")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
-  deletedAt     DateTime? @map("deleted_at")
+  id            Int                   @id @default(autoincrement())
+  userId        Int                   @map("user_id")
+  content       String?               @db.Text
+  whoCanSee     PostVisibility        @default(public)
+  whoCanComment PostCommentPermission @default(everyone)
+  createdAt     DateTime              @default(now()) @map("created_at")
+  updatedAt     DateTime              @updatedAt @map("updated_at")
+  deletedAt     DateTime?             @map("deleted_at")
 
   // Relations
   user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -274,17 +284,16 @@ model Comment {
 }
 
 model Reaction {
-  id           Int        @id @default(autoincrement())
-  userId       Int        @map("user_id")
-  targetType   TargetType @map("target_type")
-  targetId     Int        @map("target_id")
-  reactionType String     @map("reaction_type") // "like", "love", "fire", "super_love"
-  createdAt    DateTime   @default(now()) @map("created_at")
-  updatedAt    DateTime   @updatedAt @map("updated_at")
+  id           Int          @id @default(autoincrement())
+  userId       Int          @map("user_id")
+  targetType   TargetType   @map("target_type")
+  targetId     Int          @map("target_id")
+  reactionType ReactionType @map("reaction_type")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
 
   // Relations
-  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reactionConfig ReactionConfig @relation(fields: [reactionType], references: [type])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Unique constraint: một user chỉ react 1 lần cho 1 target
   @@unique([userId, targetType, targetId])
@@ -295,38 +304,18 @@ model Reaction {
 }
 
 model ReactionSummary {
-  id           Int        @id @default(autoincrement())
-  targetType   TargetType @map("target_type")
-  targetId     Int        @map("target_id")
-  reactionType String     @map("reaction_type")
-  count        Int        @default(0)
-  updatedAt    DateTime   @updatedAt @map("updated_at")
-
-  // Relation to config
-  reactionConfig ReactionConfig @relation(fields: [reactionType], references: [type])
+  id           Int          @id @default(autoincrement())
+  targetType   TargetType   @map("target_type")
+  targetId     Int          @map("target_id")
+  reactionType ReactionType @map("reaction_type")
+  count        Int          @default(0)
+  updatedAt    DateTime     @updatedAt @map("updated_at")
 
   @@unique([targetType, targetId, reactionType])
   @@index([targetType, targetId])
   @@map("reaction_summaries")
 }
 
-model ReactionConfig {
-  id        Int      @id @default(autoincrement())
-  type      String   @unique // "like", "love", "fire", "super_love"
-  name      String // "Like", "Love", "Fire", "Super Love"
-  emoji     String // "👍", "❤️", "🔥", "😍"
-  color     String? // "#007AFF", "#FF3B30"
-  isActive  Boolean  @default(true) @map("is_active")
-  sortOrder Int      @default(0) @map("sort_order")
-  createdAt DateTime @default(now()) @map("created_at")
-
-  // Relations
-  reactions         Reaction[]        @relation
-  reactionSummaries ReactionSummary[] @relation
-  notifications     Notification[]
-
-  @@map("reaction_configs")
-}
 
 model Mention {
   id        Int      @id @default(autoincrement())
@@ -384,41 +373,32 @@ model SavedPost {
 }
 
 model Notification {
-  id         Int                    @id @default(autoincrement())
-  userId     Int                    @map("user_id") // Người nhận notification
-  actorId    Int                    @map("actor_id") // Người thực hiện action
-  type       NotificationType
-  targetType NotificationTargetType @map("target_type")
-  targetId   Int?                   @map("target_id")
-  isRead     Boolean                @default(false) @map("is_read")
-  createdAt  DateTime               @default(now()) @map("created_at")
-  updatedAt  DateTime               @default(now()) @map("updated_at")
-  reactionId Int?                   @map("reaction_id")
+  id          Int                    @id @default(autoincrement())
+  userId      Int                    @map("user_id")       // người nhận
+  actorId     Int                    @map("actor_id")      // người thực hiện hành động
+  type        NotificationType
+  targetType  NotificationTargetType @map("target_type")
+  targetId    Int?                   @map("target_id")
+  groupKey    String?                @map("group_key")     // gom nhóm theo thời gian hoặc người
+  metadata    Json?                  // dữ liệu phụ (ví dụ danh sách actorIds)
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @default(now()) @map("updated_at")
 
   // Relations
-  user     User            @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
-  actor    User            @relation("ActorNotifications", fields: [actorId], references: [id], onDelete: Cascade)
-  reaction ReactionConfig? @relation(fields: [reactionId], references: [id], onDelete: SetNull)
+  user   User @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  actor  User @relation("ActorNotifications", fields: [actorId], references: [id], onDelete: Cascade)
 
-  metadata Json? // Dữ liệu bổ sung
+  //constraint
+  @@unique([userId, type, targetType, targetId, groupKey], map: "unique_notif_key")
 
-  // Unique constraints
-  // Gom theo type nếu không có targetId
-  @@unique([userId, type, targetType], map: "unique_by_type")
-  // Gom theo target nếu có targetId
-  @@unique([userId, type, targetType, targetId], map: "unique_by_target")
   // Indexes
   @@index([userId])
   @@index([actorId])
-  @@index([type])
-  @@index([targetType, targetId])
-  @@index([isRead])
   @@index([createdAt])
-  // Composite indexes
-  @@index([userId, isRead]) // Query unread notifications
-  @@index([userId, createdAt]) // Query timeline
   @@map("notifications")
 }
+
+
 
 model Follow {
   followerId  Int      @map("follower_id") // id của người đi follow
@@ -547,7 +527,6 @@ model Message {
   replyTo      Message?             @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
   replies      Message[]            @relation("MessageReplies")
   states       MessageState[]       @relation("ChatMessageStates")
-  reactions    MessageReaction[]    @relation("ChatMessageReactions")
   pinnedIn     PinnedMessage[]
   editHistory  MessageEditHistory[]
 
@@ -560,7 +539,6 @@ model Message {
   @@index([conversationId, isSystem])
   @@map("messages")
 }
-
 
 // Bảng MessageState - Trạng thái tin nhắn (đã gửi, đã nhận, đã đọc)
 model MessageState {
@@ -600,23 +578,6 @@ model MessageEditHistory {
   @@map("message_edit_history")
 }
 
-// Bảng MessageReaction - React tin nhắn (emoji)
-model MessageReaction {
-  id        Int      @id @default(autoincrement())
-  messageId Int      @map("message_id")
-  userId    Int      @map("user_id")
-  emoji     String   @db.VarChar(10)
-  createdAt DateTime @default(now()) @map("created_at")
-
-  // Relations
-  message Message @relation("ChatMessageReactions", fields: [messageId], references: [id], onDelete: Cascade)
-  user    User    @relation("ChatMessageReactions", fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([messageId, userId])
-  @@index([messageId])
-  @@index([userId])
-  @@map("message_reactions")
-}
 
 // Bảng PinnedMessage - Tin nhắn được ghim
 model PinnedMessage {
