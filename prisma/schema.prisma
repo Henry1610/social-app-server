@@ -46,6 +46,7 @@ enum TargetType {
   COMMENT
   STORY
   REEL
+  REPOST
 }
 
 enum NotificationType {
@@ -98,6 +99,7 @@ model User {
   mentions                Mention[]
   reposts                 Repost[]
   saved_posts             SavedPost[]
+  postViews               PostView[]           @relation("UserPostViews")
   sentNotifications       Notification[]       @relation("ActorNotifications")
   receivedNotifications   Notification[]       @relation("UserNotifications")
   following               Follow[]             @relation("Following") // user này follow người khác
@@ -195,6 +197,7 @@ model Post {
   comments   Comment[]
   reposts    Repost[]
   savedPosts SavedPost[]
+  views      PostView[] @relation("PostViews")
 
   // Indexes
   @@index([userId])
@@ -242,9 +245,31 @@ model PostHashtag {
   @@map("post_hashtags")
 }
 
+model PostView {
+  id        Int      @id @default(autoincrement())
+  postId    Int?     @map("post_id") // Nullable để support repost views
+  repostId  Int?     @map("repost_id") // Nullable để support repost views
+  userId    Int      @map("user_id")
+  viewedAt  DateTime @default(now()) @map("viewed_at")
+
+  // Relations
+  post   Post?   @relation("PostViews", fields: [postId], references: [id], onDelete: Cascade)
+  repost Repost? @relation(fields: [repostId], references: [id], onDelete: Cascade)
+  user   User    @relation("UserPostViews", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId], name: "postId_userId", map: "postId_userId_unique")
+  @@unique([repostId, userId], name: "repostId_userId", map: "repostId_userId_unique")
+  @@index([postId])
+  @@index([repostId])
+  @@index([userId])
+  @@index([viewedAt])
+  @@map("post_views")
+}
+
 model Comment {
   id        Int       @id @default(autoincrement())
-  postId    Int       @map("post_id")
+  postId    Int?      @map("post_id") // Nullable để support repost comments
+  repostId  Int?      @map("repost_id") // Nullable để support repost comments
   userId    Int       @map("user_id")
   parentId  Int?      @map("parent_id") // Cho nested comments
   content   String    @db.Text
@@ -253,7 +278,8 @@ model Comment {
   deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  post     Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  post     Post?     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  repost   Repost?   @relation(fields: [repostId], references: [id], onDelete: Cascade)
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   parent   Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
   replies  Comment[] @relation("CommentReplies")
@@ -262,12 +288,16 @@ model Comment {
   // Thêm composite index cho nested comments
   @@index([postId, parentId]) // Query replies nhanh hơn
   @@index([postId, createdAt]) // Phân trang comments
+  @@index([repostId, parentId]) // Query replies cho repost nhanh hơn
+  @@index([repostId, createdAt]) // Phân trang comments cho repost
   // Indexes
   @@index([postId])
+  @@index([repostId])
   @@index([userId])
   @@index([parentId])
   @@index([createdAt])
   @@index([deletedAt])
+  // Constraint: comment phải có postId hoặc repostId (không thể có cả hai hoặc không có cả hai)
   @@map("comments")
 }
 
@@ -333,8 +363,10 @@ model Repost {
   deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post     Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  comments Comment[]
+  views    PostView[]
 
   // Unique constraint: một user chỉ repost 1 lần cho 1 post
   @@unique([userId, postId])

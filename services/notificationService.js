@@ -54,7 +54,7 @@ export const createNotification = async ({
     });
   }
 
-  return await createGroupedNotification({
+    return await createGroupedNotification({
     userId,
     actorId,
     type,
@@ -145,12 +145,12 @@ const createIndividualNotification = async ({
     } else {
       try {
         notification = await prisma.notification.create({
-          data: {
-            user: { connect: { id: userId } },
-            actor: { connect: { id: actorId } },
-            type,
-            targetType,
-            targetId,
+    data: {
+      user: { connect: { id: userId } },
+      actor: { connect: { id: actorId } },
+      type,
+      targetType,
+      targetId,
             groupKey: null
           },
           include: { actor: { select: ACTOR_SELECT } }
@@ -181,7 +181,7 @@ const createIndividualNotification = async ({
 
     emitNotification(userId, notification);
 
-    return notification;
+  return notification;
   } catch (error) {
     console.error('Error creating individual notification:', error);
     throw error;
@@ -210,7 +210,7 @@ const createGroupedNotification = async ({
       include: { actor: { select: ACTOR_SELECT } }
     });
 
-    if (existing) {
+  if (existing) {
       const timeSinceUpdate = now.getTime() - existing.updatedAt.getTime();
       const isExpired = timeSinceUpdate > TIME_WINDOW;
 
@@ -229,8 +229,8 @@ const createGroupedNotification = async ({
       metadata.actorIds = metadata.actorIds || [];
 
       if (metadata.actorIds.includes(actorId)) {
-        return existing;
-      }
+      return existing;
+    }
 
       metadata.actorIds.push(actorId);
       metadata.count = metadata.actorIds.length;

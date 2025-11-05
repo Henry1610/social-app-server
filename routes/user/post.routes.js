@@ -7,13 +7,15 @@ import {
   deletePost,
   savePost,
   unsavePost,
-  getMySavedPosts
+  markPostAsViewed,
+  getFeedPosts
 } from '../../controllers/user/post.controller.js';
 import { uploadPostMedia } from '../../controllers/user/upload.controller.js';
 import { upload } from '../../middlewares/upload.js';
 
 const router = express.Router();
 
+router.get('/feed', getFeedPosts);
 router.post('/', createPost);
 router.post('/upload-media', (req, res, next) => {
   upload.array('files', 10)(req, res, (err) => {
@@ -25,11 +27,11 @@ router.post('/upload-media', (req, res, next) => {
     next()
   })
 }, uploadPostMedia);
-router.get('/saved-posts', getMySavedPosts);
-router.get('/:id', getMyPostById);
-router.put('/:id', updatePost);
-router.patch('/:id', updatePost);
-router.delete('/:id', deletePost);
-router.post('/:id/save', savePost);
-router.delete('/:id/save', unsavePost);
+router.get('/:postId', getMyPostById);
+router.put('/:postId', updatePost);
+router.patch('/:postId', updatePost);
+router.delete('/:postId', deletePost);
+router.post('/:postId/save', savePost);
+router.delete('/:postId/save', unsavePost);
+router.post('/:postId/view', markPostAsViewed);
 export default router;
