@@ -1,8 +1,8 @@
 import prisma from "../utils/prisma.js";
 
-//Get user by id
-export const getUserById = async (id) => {
-    return await prisma.user.findUnique({
+//Get user by id (tự động throw error nếu không tìm thấy)
+export const getUserById = async (id, errorMessage = 'Người dùng không tồn tại!') => {
+    const user = await prisma.user.findUnique({
       where: { id },
       select: {
         id: true,
@@ -21,6 +21,14 @@ export const getUserById = async (id) => {
         }
       }
     });
-  };
+    
+    if (!user) {
+        const error = new Error(errorMessage);
+        error.statusCode = 404;
+        throw error;
+    }
+    
+    return user;
+};
   
 

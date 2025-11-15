@@ -1,5 +1,6 @@
 import prisma from "../../utils/prisma.js";
 import { getReactionCounts } from "../../utils/postStatsHelper.js";
+import { isFollowing } from "../../services/followService.js";
 
 // Helper: User select fields (dùng chung cho nhiều queries)
 const userSelectFields = {
@@ -12,32 +13,62 @@ const userSelectFields = {
 /**
  * GET /api/user/:username/reposts
  * Lấy danh sách reposts của một user
- * Chỉ cho phép xem reposts của chính mình
+ * Cho phép xem reposts của người khác (với kiểm tra privacy settings)
  */
-export const getUserRepostsReview = async (req, res) => {
+export const getUserReposts = async (req, res) => {
   const targetUserId = Number(req.resolvedUserId);
-  const currentUserId = req.user?.id || null;
-
-  // Chỉ cho phép xem reposts của chính mình
-  if (!currentUserId || targetUserId !== currentUserId) {
-    return res.status(403).json({
-      success: false,
-      message: 'Bạn chỉ có thể xem bài viết đã đăng lại của chính mình!'
-    });
-  }
+  const currentUserId = req.user?.id ? Number(req.user.id) : null;
 
   try {
+    // Kiểm tra privacy settings của tài khoản repost
+    const targetUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, privacySettings: { select: { isPrivate: true } } }
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({ success: false, message: 'Người dùng không tồn tại!' });
+    }
+
+    const isSelf = targetUserId === currentUserId;
+    const isPrivateAccount = targetUser.privacySettings?.isPrivate;
+
+    // Kiểm tra follow relationship (chỉ query một lần)
+    let isFollowingTargetUser = false;
+    if (!isSelf && currentUserId) {
+      isFollowingTargetUser = await isFollowing(currentUserId, targetUserId);
+    }
+
+    // Kiểm tra quyền truy cập: nếu tài khoản riêng tư và không phải chính mình
+    if (!isSelf && isPrivateAccount) {
+      if (!currentUserId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Tài khoản này là riêng tư. Bạn cần đăng nhập và theo dõi để xem bài viết đã đăng lại!'
+        });
+      }
+
+      if (!isFollowingTargetUser) {
+        return res.status(403).json({
+          success: false,
+          message: 'Tài khoản này là riêng tư. Bạn cần theo dõi để xem bài viết đã đăng lại!'
+        });
+      }
+    }
+
+    // Lấy tất cả reposts (kể cả khi post gốc bị xóa hoặc bị ẩn)
     const reposts = await prisma.repost.findMany({
       where: { 
         userId: targetUserId,
-        deletedAt: null
+        deletedAt: null,
+        // Không filter post gốc để vẫn hiển thị repost khi post gốc bị xóa hoặc bị ẩn
       },
       orderBy: { createdAt: 'desc' },
       include: {
-        user: { // người repost
+        user: { // người repost (chính là targetUserId)
           select: userSelectFields
         },
-        post: { // bài viết gốc
+        post: { // bài viết gốc (có thể null nếu bị xóa)
           include: {
             user: { // người đăng bài gốc
               select: userSelectFields
@@ -54,76 +85,181 @@ export const getUserRepostsReview = async (req, res) => {
       }
     });
 
-    // Lấy tất cả repost IDs và post IDs
-    const repostIds = reposts.map(r => r.id);
-    const postIds = reposts.map(r => r.post.id);
-    
-    // Lấy reaction counts cho reposts và posts gốc song song (chỉ reactions cần helper, còn lại dùng _count)
-    const [repostReactionCountMap, postReactionCountMap] = await Promise.all([
-      getReactionCounts(repostIds, 'REPOST'),
-      getReactionCounts(postIds, 'POST')
-    ]);
+    // Nếu không có repost nào, trả về mảng rỗng
+    if (reposts.length === 0) {
+      return res.json({ success: true, reposts: [] });
+    }
 
-    // Lấy trạng thái tương tác của user cho posts gốc
-    const [myPostReactions, mySavedPosts, myRepostedPosts] = await Promise.all([
-      prisma.reaction.findMany({
+    // Lấy tất cả repost IDs và post IDs (chỉ lấy post IDs hợp lệ)
+    const repostIds = reposts.map(r => r.id);
+    const postIds = reposts
+      .filter(r => r.post && !r.post.deletedAt)
+      .map(r => r.post.id);
+    
+    // Kiểm tra quyền xem post gốc cho từng repost
+    const canViewOriginalPost = new Map();
+    for (const repost of reposts) {
+      if (!repost.post) {
+        // Post gốc không tồn tại
+        canViewOriginalPost.set(repost.id, false);
+        continue;
+      }
+      
+      if (repost.post.deletedAt) {
+        // Post gốc bị xóa
+        canViewOriginalPost.set(repost.id, false);
+        continue;
+      }
+      
+      const postWhoCanSee = repost.post.whoCanSee || 'everyone';
+      const isPostOwner = repost.post.userId === currentUserId;
+      
+      // Nếu là chủ post gốc, luôn xem được
+      if (isPostOwner) {
+        canViewOriginalPost.set(repost.id, true);
+        continue;
+      }
+      
+      // Nếu post gốc có whoCanSee = 'nobody', không xem được
+      if (postWhoCanSee === 'nobody') {
+        canViewOriginalPost.set(repost.id, false);
+        continue;
+      }
+      
+      // Nếu là chính mình (người repost), xem được (trừ 'nobody' đã check ở trên)
+      if (isSelf) {
+        canViewOriginalPost.set(repost.id, true);
+        continue;
+      }
+      
+      // Kiểm tra privacy settings
+      if (postWhoCanSee === 'followers') {
+        canViewOriginalPost.set(repost.id, isFollowingTargetUser);
+      } else {
+        // 'everyone'
+        canViewOriginalPost.set(repost.id, true);
+      }
+    }
+    
+    // Lấy tất cả dữ liệu cần thiết song song để tối ưu performance
+    const [
+      repostReactionCountMap,
+      postReactionCountMap,
+      myPostReactions,
+      mySavedPosts,
+      myRepostedPosts,
+      myRepostReactions,
+      repostsCountMap
+    ] = await Promise.all([
+      // Reaction counts cho reposts và posts gốc
+      getReactionCounts(repostIds, 'REPOST'),
+      getReactionCounts(postIds, 'POST'),
+      // Trạng thái tương tác của người đang xem (currentUserId) với posts gốc
+      currentUserId ? prisma.reaction.findMany({
         where: {
-          userId: targetUserId,
+          userId: currentUserId,
           targetId: { in: postIds },
           targetType: 'POST'
         },
         select: { targetId: true }
-      }),
-      prisma.savedPost.findMany({
+      }) : Promise.resolve([]),
+      currentUserId ? prisma.savedPost.findMany({
         where: {
-          userId: targetUserId,
+          userId: currentUserId,
           postId: { in: postIds }
         },
         select: { postId: true }
-      }),
-      prisma.repost.findMany({
+      }) : Promise.resolve([]),
+      currentUserId ? prisma.repost.findMany({
         where: {
-          userId: targetUserId,
+          userId: currentUserId,
           postId: { in: postIds },
           deletedAt: null
         },
         select: { postId: true }
+      }) : Promise.resolve([]),
+      // Trạng thái tương tác của người đang xem (currentUserId) với chính reposts
+      currentUserId ? prisma.reaction.findMany({
+        where: {
+          userId: currentUserId,
+          targetId: { in: repostIds },
+          targetType: 'REPOST'
+        },
+        select: { targetId: true }
+      }) : Promise.resolve([]),
+      // Đếm số lượng reposts với deletedAt: null cho mỗi post
+      prisma.repost.groupBy({
+        by: ['postId'],
+        where: {
+          postId: { in: postIds },
+          deletedAt: null
+        },
+        _count: {
+          id: true
+        }
       })
     ]);
 
+    // Chuyển đổi thành Set để lookup nhanh hơn
     const myReactionPostIds = new Set(myPostReactions.map(r => r.targetId));
     const mySavedPostIds = new Set(mySavedPosts.map(s => s.postId));
     const myRepostedPostIds = new Set(myRepostedPosts.map(r => r.postId));
+    const myReactionRepostIds = new Set(myRepostReactions.map(r => r.targetId));
+    
+    // Tạo map repostsCount: postId -> count (chỉ đếm reposts chưa xóa)
+    const repostsCountByPostId = {};
+    repostsCountMap.forEach(item => {
+      repostsCountByPostId[item.postId] = item._count.id;
+    });
 
-    // Format dữ liệu: thêm reaction và comment counts cho repost
-    const repostsWithCounts = reposts.map(repost => ({
-      ...repost,
-      reactionCount: repostReactionCountMap[repost.id] || 0, // Reactions của repost
-      commentCount: repost._count.comments || 0, // Comments của repost (lấy từ _count)
-      post: {
-        ...repost.post,
-        _count: {
-          ...repost.post._count,
-          reactions: postReactionCountMap[repost.post.id] || 0, // Reactions của post gốc
-          // comments và reposts đã có trong _count từ Prisma query
+    // Format dữ liệu response
+    const repostsWithCounts = reposts.map(repost => {
+      const canView = canViewOriginalPost.get(repost.id) || false;
+      const isOriginalPostDeleted = !repost.post || repost.post.deletedAt;
+      const isOriginalPostHidden = !canView;
+      
+      return {
+        id: repost.id,
+        content: repost.content,
+        createdAt: repost.createdAt,
+        userId: repost.userId,
+        postId: repost.postId,
+        // Thông tin người repost
+        user: repost.user,
+        // Stats của repost
+        reactionCount: repostReactionCountMap[repost.id] || 0,
+        commentCount: repost._count.comments || 0,
+        // Trạng thái tương tác của user với repost
+        isLiked: myReactionRepostIds.has(repost.id),
+        // Lưu ý: isSaved và isReposted check trên post gốc (vì savedPost/repost lưu postId, không phải repostId)
+        isSaved: repost.post && canView ? mySavedPostIds.has(repost.post.id) : false,
+        isReposted: repost.post && canView ? myRepostedPostIds.has(repost.post.id) : false,
+        // Thông tin bài gốc
+        post: (isOriginalPostDeleted || isOriginalPostHidden) ? null : {
+          ...repost.post,
+          _count: {
+            ...repost.post._count,
+            reactions: postReactionCountMap[repost.post.id] || 0,
+          },
+          // Stats của bài gốc (để frontend dễ sử dụng)
+          originalReactionCount: postReactionCountMap[repost.post.id] || 0,
+          originalCommentCount: repost.post._count.comments || 0,
+          originalRepostsCount: repostsCountByPostId[repost.post.id] || 0, // Chỉ đếm reposts chưa xóa (deletedAt: null)
+          originalSavesCount: repost.post._count.savedPosts || 0,
+          originalCreatedAt: repost.post.createdAt,
+          // Trạng thái tương tác của user với bài gốc
+          originalIsLiked: myReactionPostIds.has(repost.post.id),
+          originalIsSaved: mySavedPostIds.has(repost.post.id),
+          originalIsReposted: myRepostedPostIds.has(repost.post.id),
         },
-        // Thêm stats của bài gốc vào response
-        originalReactionCount: postReactionCountMap[repost.post.id] || 0,
-        originalCommentCount: repost.post._count.comments || 0,
-        originalRepostsCount: repost.post._count.reposts || 0,
-        originalSavesCount: repost.post._count.savedPosts || 0,
-        // Thêm thời gian của bài gốc
-        originalCreatedAt: repost.post.createdAt,
-      },
-      // Thêm trạng thái tương tác của bài gốc
-      originalIsLiked: myReactionPostIds.has(repost.post.id),
-      originalIsSaved: mySavedPostIds.has(repost.post.id),
-      originalIsReposted: myRepostedPostIds.has(repost.post.id),
-    }));
+        // Đánh dấu post gốc bị xóa hoặc bị ẩn
+        isOriginalPostDeleted: isOriginalPostDeleted || isOriginalPostHidden,
+      };
+    });
 
     res.json({ success: true, reposts: repostsWithCounts });
   } catch (error) {
-    console.error('Error getAllRePosts:', error);
+    console.error('Error getUserReposts:', error);
     res.status(500).json({ success: false, message: 'Lỗi server!' });
   }
 };

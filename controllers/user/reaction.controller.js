@@ -110,39 +110,6 @@ export const createOrUpdateReaction = async (req, res) => {
     }
 };
 /**
- * DELETE /api/user/reactions/:id
- * Xóa reaction theo ID (có thể không cần vì createOrUpdateReaction đã có toggle)
- */
-export const deleteReaction = async (req, res) => {
-    const { id } = req.params;
-    const userId = req.user.id;
-    
-    try {
-        const reaction = await prisma.reaction.findUnique({ 
-            where: { id: Number(id) } 
-        });
-        
-        if (!reaction || reaction.userId !== userId) {
-            return res.status(404).json({ 
-                success: false,
-                message: "Reaction not found" 
-            });
-        }
-        
-        await prisma.reaction.delete({ where: { id: Number(id) } });
-        res.status(200).json({ 
-            success: true,
-            message: "Reaction deleted" 
-        });
-    } catch (error) {
-        console.error("Error in deleteReaction:", error);
-        res.status(500).json({ 
-            success: false,
-            message: "Internal server error" 
-        });
-    }
-}
-/**
  * GET /api/user/reactions?targetId=123&targetType=POST
  * Lấy danh sách reactions của một target
  */

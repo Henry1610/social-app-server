@@ -141,8 +141,7 @@ export const rejectFollowRequestService = async (targetUserId, currentUserId) =>
 export const followUserService = async (userId, followingId) => {
   try {
     if (userId === followingId) return { success: false, message: "Không thể follow chính mình!" };
-    const targetUser = await getUserById(followingId);
-    if (!targetUser) return { success: false, message: "Người dùng không tồn tại!" };
+    const targetUser = await getUserById(followingId, "Người dùng không tồn tại!");
 
     if (await isFollowing(userId, followingId)) return { success: false, message: "Bạn đã theo dõi người dùng này!" };
 
@@ -202,8 +201,7 @@ export const removeFollowerService = async (followerId, followingId) => {
     if (followerId === followingId) return { success: false, message: "Không thể xóa chính mình!" };
     
     // Kiểm tra người dùng có tồn tại không
-    const targetUser = await getUserById(followingId);
-    if (!targetUser) return { success: false, message: "Người dùng không tồn tại!" };
+    const targetUser = await getUserById(followingId, "Người dùng không tồn tại!");
     
     // Kiểm tra đã follow chưa
     const alreadyFollowing = await isFollowing(followerId, Number(followingId));

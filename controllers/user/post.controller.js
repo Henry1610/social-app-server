@@ -1,5 +1,6 @@
 import prisma from "../../utils/prisma.js";
 import { getReactionCounts } from "../../utils/postStatsHelper.js";
+import { isFollowing } from "../../services/followService.js";
 
 // Helper: User select fields (dùng chung cho nhiều queries)
 const userSelectFields = {
@@ -140,16 +141,9 @@ export const getMyPostById = async (req, res) => {
           });
         }
 
-        const isFollowing = await prisma.follow.findUnique({
-          where: {
-            followerId_followingId: {
-              followerId: currentUserId,
-              followingId: post.userId
-            }
-          }
-        });
+        const isFollowingPost = await isFollowing(currentUserId, post.userId);
 
-        if (!isFollowing) {
+        if (!isFollowingPost) {
           return res.status(403).json({
             success: false,
             message: 'Bạn cần theo dõi để xem bài viết này!'
@@ -238,7 +232,7 @@ export const updatePost = async (req, res) => {
     }
 
     // Transaction
-    const updatedPost = await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
       // Prepare update data
       const updateData = {
         content: content ?? existingPost.content,
@@ -275,10 +269,9 @@ export const updatePost = async (req, res) => {
           });
         }
       }
-
-      return post;
     });
 
+    // Fetch complete post với relations sau khi transaction hoàn thành
     const completePost = await prisma.post.findUnique({
       where: { id: Number(postId) },
       include: {
@@ -498,16 +491,9 @@ export const getUserPostsPreview = async (req, res) => {
         });
       }
 
-      const isFollowing = await prisma.follow.findUnique({
-        where: {
-          followerId_followingId: {
-            followerId: currentUserId,
-            followingId: targetUserId
-          }
-        }
-      });
+      const isFollowingUser = await isFollowing(currentUserId, targetUserId);
 
-      if (!isFollowing) {
+      if (!isFollowingUser) {
         return res.status(403).json({
           success: false,
           message: 'Tài khoản này là riêng tư. Bạn cần theo dõi để xem bài viết!'
@@ -518,15 +504,8 @@ export const getUserPostsPreview = async (req, res) => {
     const whereClause = { userId: targetUserId, deletedAt: null };
 
     if (!isSelf && currentUserId) {
-      const isFollowing = await prisma.follow.findUnique({
-        where: {
-          followerId_followingId: {
-            followerId: currentUserId,
-            followingId: targetUserId
-          }
-        }
-      });
-      whereClause.whoCanSee = isFollowing ? { in: ['everyone', 'followers'] } : 'everyone';
+      const isFollowingUser = await isFollowing(currentUserId, targetUserId);
+      whereClause.whoCanSee = isFollowingUser ? { in: ['everyone', 'followers'] } : 'everyone';
     } else if (!isSelf) {
       whereClause.whoCanSee = 'everyone';
     }
@@ -545,8 +524,27 @@ export const getUserPostsPreview = async (req, res) => {
 
     const postIds = posts.map(p => p.id);
     
-    // Lấy reaction counts cho posts (chỉ reactions cần helper, còn lại dùng _count)
-    const reactionCountMap = await getReactionCounts(postIds, 'POST');
+    // Lấy reaction counts và reposts counts cho posts
+    const [reactionCountMap, repostsCountMap] = await Promise.all([
+      getReactionCounts(postIds, 'POST'),
+      // Đếm số lượng reposts với deletedAt: null cho mỗi post
+      prisma.repost.groupBy({
+        by: ['postId'],
+        where: {
+          postId: { in: postIds },
+          deletedAt: null
+        },
+        _count: {
+          id: true
+        }
+      })
+    ]);
+
+    // Tạo map repostsCount: postId -> count (chỉ đếm reposts chưa xóa)
+    const repostsCountByPostId = {};
+    repostsCountMap.forEach(item => {
+      repostsCountByPostId[item.postId] = item._count.id;
+    });
 
     const postsWithCounts = posts.map(post => ({
       id: post.id,
@@ -554,7 +552,7 @@ export const getUserPostsPreview = async (req, res) => {
       previewMediaType: post.media[0]?.mediaType || null,
       reactionCount: reactionCountMap[post.id] || 0,
       commentCount: post._count.comments || 0,
-      repostsCount: post._count.reposts || 0,
+      repostsCount: repostsCountByPostId[post.id] || 0, // Chỉ đếm reposts chưa xóa (deletedAt: null)
       savesCount: post._count.savedPosts || 0
     }));
 
@@ -690,16 +688,18 @@ export const getFeedPosts = async (req, res) => {
     });
 
     // Query reposts từ những user đang follow + chính mình
+    // Lưu ý: Chỉ hiển thị repost nếu post gốc còn tồn tại và không bị ẩn
     const reposts = await prisma.repost.findMany({
       where: {
         deletedAt: null,
         userId: { in: allowedUserIds },
         post: {
-          deletedAt: null,
+          deletedAt: null, // Post gốc không bị xóa
           OR: [
-            // Post gốc của chính mình: hiển thị tất cả
+            // Post gốc của chính mình: hiển thị tất cả (kể cả whoCanSee = 'nobody')
             { userId: userId },
             // Post gốc của người đang follow: chỉ hiển thị nếu whoCanSee là 'everyone' hoặc 'followers'
+            // KHÔNG hiển thị nếu whoCanSee = 'nobody'
             {
               userId: { in: followingUserIds },
               whoCanSee: { in: ['everyone', 'followers'] }
@@ -744,11 +744,64 @@ export const getFeedPosts = async (req, res) => {
     // Lấy tất cả repost IDs
     const allRepostIds = reposts.map(r => r.id);
 
-    // Lấy reaction counts cho posts và reposts song song (chỉ reactions cần helper, còn lại dùng _count)
-    const [postReactionCountMap, repostReactionCountMap] = await Promise.all([
+    // Lấy reaction counts, reposts counts và comment counts cho posts và reposts song song
+    const [postReactionCountMap, repostReactionCountMap, repostsCountMap, postCommentCountMap, repostCommentCountMap] = await Promise.all([
       getReactionCounts(allPostIds, 'POST'),
-      getReactionCounts(allRepostIds, 'REPOST')
+      getReactionCounts(allRepostIds, 'REPOST'),
+      // Đếm số lượng reposts với deletedAt: null cho mỗi post
+      prisma.repost.groupBy({
+        by: ['postId'],
+        where: {
+          postId: { in: allPostIds },
+          deletedAt: null
+        },
+        _count: {
+          id: true
+        }
+      }),
+      // Đếm comments của posts (chỉ comments có postId, không phải repostId)
+      prisma.comment.groupBy({
+        by: ['postId'],
+        where: {
+          postId: { in: allPostIds },
+          repostId: null,
+          deletedAt: null
+        },
+        _count: {
+          id: true
+        }
+      }),
+      // Đếm comments của reposts (chỉ comments có repostId, không phải postId)
+      prisma.comment.groupBy({
+        by: ['repostId'],
+        where: {
+          repostId: { in: allRepostIds },
+          postId: null,
+          deletedAt: null
+        },
+        _count: {
+          id: true
+        }
+      })
     ]);
+
+    // Tạo map repostsCount: postId -> count (chỉ đếm reposts chưa xóa)
+    const repostsCountByPostId = {};
+    repostsCountMap.forEach(item => {
+      repostsCountByPostId[item.postId] = item._count.id;
+    });
+
+    // Tạo map commentCount: postId -> count (chỉ đếm comments của post, không phải repost)
+    const commentCountByPostId = {};
+    postCommentCountMap.forEach(item => {
+      commentCountByPostId[item.postId] = item._count.id;
+    });
+
+    // Tạo map commentCount: repostId -> count (chỉ đếm comments của repost, không phải post)
+    const commentCountByRepostId = {};
+    repostCommentCountMap.forEach(item => {
+      commentCountByRepostId[item.repostId] = item._count.id;
+    });
 
     // Lấy my reactions để check xem current user đã like post nào chưa
     const myPostReactions = await prisma.reaction.findMany({
@@ -845,8 +898,8 @@ export const getFeedPosts = async (req, res) => {
         previewImage: post.media[0]?.mediaUrl || null,
         previewMediaType: post.media[0]?.mediaType || null,
         reactionCount: postReactionCountMap[post.id] || 0,
-        commentCount: post._count.comments || 0,
-        repostsCount: post._count.reposts || 0,
+        commentCount: commentCountByPostId[post.id] || 0, // Chỉ đếm comments của post, không phải repost
+        repostsCount: repostsCountByPostId[post.id] || 0, // Chỉ đếm reposts chưa xóa (deletedAt: null)
         savesCount: post._count.savedPosts || 0,
         whoCanSee: post.whoCanSee,
         whoCanComment: post.whoCanComment,
@@ -873,11 +926,11 @@ export const getFeedPosts = async (req, res) => {
         previewImage: repost.post.media[0]?.mediaUrl || null,
         previewMediaType: repost.post.media[0]?.mediaType || null,
         reactionCount: repostReactionCountMap[repost.id] || 0, // Reactions của repost
-        commentCount: repost._count.comments || 0, // Comments của repost (lấy từ _count)
+        commentCount: commentCountByRepostId[repost.id] || 0, // Comments của repost (chỉ comments có repostId, không phải postId)
         // Stats của bài gốc
         originalReactionCount: postReactionCountMap[repost.post.id] || 0,
-        originalCommentCount: repost.post._count.comments || 0,
-        originalRepostsCount: repost.post._count.reposts || 0,
+        originalCommentCount: commentCountByPostId[repost.post.id] || 0, // Chỉ đếm comments của post gốc, không phải repost
+        originalRepostsCount: repostsCountByPostId[repost.post.id] || 0, // Chỉ đếm reposts chưa xóa (deletedAt: null)
         originalSavesCount: repost.post._count.savedPosts || 0,
         // Trạng thái tương tác của bài gốc
         originalIsLiked: myReactionPostIds.has(repost.post.id),

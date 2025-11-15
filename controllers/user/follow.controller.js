@@ -1,7 +1,8 @@
-import { followUserService, unfollowUserService, acceptFollowRequestService, rejectFollowRequestService, removeFollowerService } from "../../services/followService.js";
+import { followUserService, unfollowUserService, acceptFollowRequestService, rejectFollowRequestService, removeFollowerService, isFollowing } from "../../services/followService.js";
 import { getFollowersList, getFollowingList, getFollowStatsService } from "../../services/redis/followService.js";
 import prisma from "../../utils/prisma.js";
 import { followEvents } from "../../socket/events/followEvents.js";
+import { getUserById } from "../../services/userService.js";
 
 // POST api/user/follows/:username ( nếu là tk private thì tạo follow request)
 export const followUser = async (req, res) => {
@@ -238,37 +239,15 @@ export const getFollowings = async (req, res) => {
 
     try {
         // Tìm user theo username
-        const user = await prisma.user.findUnique({
-            where: { id: targetUserId },
-            select: {
-                id: true,
-                privacySettings: {
-                    select: { isPrivate: true }
-                }
-            }
-        });
-
-        if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: 'User không tồn tại!'
-            });
-        }
+        const user = await getUserById(targetUserId, 'User không tồn tại!');
 
         // Kiểm tra quyền xem following
         if (user.id !== currentUserId) {
             // Kiểm tra xem current user có đang follow target user không
-            const isFollowing = await prisma.follow.findUnique({
-                where: {
-                    followerId_followingId: {
-                        followerId: currentUserId,
-                        followingId: targetUserId
-                    }
-                }
-            });
+            const isFollowingUser = await isFollowing(currentUserId, targetUserId);
 
             // Nếu tài khoản private và current user không follow target user → chặn
-            if (user.privacySettings?.isPrivate && !isFollowing) {
+            if (user.privacySettings?.isPrivate && !isFollowingUser) {
                 return res.status(403).json({
                     success: false,
                     message: 'Tài khoản này là private. Bạn cần theo dõi để xem danh sách following!'
@@ -321,17 +300,10 @@ export const getFollowers = async (req, res) => {
         // Kiểm tra quyền xem followers
         if (user.id !== currentUserId) {
             // Kiểm tra xem current user có đang follow target user không
-            const isFollowing = await prisma.follow.findUnique({
-                where: {
-                    followerId_followingId: {
-                        followerId: currentUserId,
-                        followingId: targetUserId
-                    }
-                }
-            });
+            const isFollowingUser = await isFollowing(currentUserId, targetUserId);
 
             // Nếu tài khoản private và current user không follow target user → chặn
-            if (user.privacySettings?.isPrivate && !isFollowing) {
+            if (user.privacySettings?.isPrivate && !isFollowingUser) {
                 return res.status(403).json({
                     success: false,
                     message: 'Tài khoản này là private. Bạn cần theo dõi để xem danh sách followers!'
@@ -401,25 +373,10 @@ export const getFollowStatus = async (req, res) => {
         }
 
         // Kiểm tra trạng thái follow
-        const follow = await prisma.follow.findUnique({
-            where: {
-                followerId_followingId: {
-                    followerId: currentUserId,
-                    followingId: user.id
-                }
-            },
-            select: { followerId: true, followingId: true }
-        });
+        const isFollowingUser = await isFollowing(currentUserId, user.id);
         
         // Kiểm tra xem user đang xem có đang theo dõi user hiện tại không
-        const isFollower = await prisma.follow.findUnique({
-            where: {
-                followerId_followingId: {
-                    followerId: user.id,
-                    followingId: currentUserId
-                }
-            }
-        });
+        const isFollower = await isFollowing(user.id, currentUserId);
         
         const followRequest = await prisma.followRequest.findUnique({
             where: {
@@ -444,9 +401,9 @@ export const getFollowStatus = async (req, res) => {
             success: true,
             isSelf: false,
             isPrivate: user.isPrivate,
-            isFollowing: !!follow,
+            isFollowing: isFollowingUser,
             isPending: !!followRequest,
-            isFollower: !!isFollower,
+            isFollower: isFollower,
             hasIncomingRequest: !!incomingFollowRequest
         });
     } catch (error) {

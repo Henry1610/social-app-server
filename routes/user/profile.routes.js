@@ -2,7 +2,7 @@ import express from 'express';
 import { getPublicProfile } from '../../controllers/user/search.controller.js';
 import { uploadAvatar } from '../../controllers/user/upload.controller.js';
 import { getUserPostsPreview, getUserSavedPostsReview } from '../../controllers/user/post.controller.js';
-import { getUserRepostsReview } from '../../controllers/user/repost.controller.js';
+import { getUserReposts } from '../../controllers/user/repost.controller.js';
 import { updatePrivacySettings } from '../../controllers/user/profile.controller.js';
 import { getMe } from '../../controllers/authController.js';
 import { resolveUser } from '../../middlewares/resolveUser.js';
@@ -26,6 +26,6 @@ router.put('/privacy', updatePrivacySettings);
 router.get('/:username/profile', resolveUser, getPublicProfile);
 router.get('/:username/posts', resolveUser, getUserPostsPreview);
 router.get('/:username/saved-posts', resolveUser, getUserSavedPostsReview);
-router.get('/:username/reposts', resolveUser, getUserRepostsReview);
+router.get('/:username/reposts', resolveUser, getUserReposts);
 
 export default router;

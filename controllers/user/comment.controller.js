@@ -1,41 +1,6 @@
 import prisma from "../../utils/prisma.js";
 import { postEvents } from "../../socket/events/postEvents.js";
-
-/**
- * Helper function: Kiểm tra quyền comment dựa trên whoCanComment setting
- * userId: ID của user đang cố comment
- * post: Post object có userId và whoCanComment
- * Trả về: {allowed: boolean, message?: string}
- */
-const checkCommentPermission = async (userId, post) => {
-  const whoCanComment = post.whoCanComment || 'everyone';
-  
-  switch (whoCanComment) {
-    case "everyone":
-      return { allowed: true };
-      
-    case "followers":
-      const isFollower = await prisma.follow.findFirst({
-        where: {
-          followerId: userId,
-          followingId: post.userId,
-        },
-      });
-      if (!isFollower) {
-        return { allowed: false, message: "Chỉ follower mới được comment" };
-      }
-      return { allowed: true };
-      
-    case "nobody":
-      if (post.userId !== userId) {
-        return { allowed: false, message: "Chỉ chủ post mới được comment" };
-      }
-      return { allowed: true };
-      
-    default:
-      return { allowed: false, message: "Cấu hình quyền comment không hợp lệ" };
-  }
-};
+import { checkCommentPermission } from "../../services/commentService.js";
 
 /**
  * GET /api/user/comments/posts/:id
@@ -127,10 +92,7 @@ export const getCommentsByPost = async (req, res) => {
   }
 };
 /**
- * POST /api/user/comments/posts/:id
- * Tạo comment mới cho một post
- * req.params.id: postId
- * req.body.content: nội dung comment
+ * POST /api/user/comments/posts/:ids
  */
 export const commentPost = async (req, res) => {
   try {
@@ -272,11 +234,15 @@ export const getCommentsByRepost = async (req, res) => {
     const sortBy = req.query.sortBy || 'desc';
     const skip = (page - 1) * limit;
 
-    // Kiểm tra repost có tồn tại không
+    // Kiểm tra repost có tồn tại không và post gốc còn tồn tại
     const repost = await prisma.repost.findFirst({
       where: {
         id: repostId,
-        deletedAt: null
+        deletedAt: null,
+        // Đảm bảo post gốc còn tồn tại và không bị xóa
+        post: {
+          deletedAt: null
+        }
       },
       select: { id: true }
     });
@@ -284,7 +250,7 @@ export const getCommentsByRepost = async (req, res) => {
     if (!repost) {
       return res.status(404).json({
         success: false,
-        message: 'Repost không tồn tại hoặc đã bị xóa!'
+        message: 'Repost không tồn tại, đã bị xóa hoặc bài viết gốc đã bị xóa!'
       });
     }
 
@@ -361,10 +327,15 @@ export const commentRepost = async (req, res) => {
     const userId = req.user.id;
 
     // Lấy repost và post gốc (để kiểm tra quyền comment)
+    // Chỉ lấy repost nếu post gốc còn tồn tại và không bị xóa
     const repost = await prisma.repost.findFirst({
       where: {
         id: repostId,
-        deletedAt: null
+        deletedAt: null,
+        // Đảm bảo post gốc còn tồn tại và không bị xóa
+        post: {
+          deletedAt: null
+        }
       },
       include: {
         post: true // Lấy post gốc để check quyền comment
@@ -374,7 +345,7 @@ export const commentRepost = async (req, res) => {
     if (!repost) {
       return res.status(404).json({
         success: false,
-        message: 'Repost không tồn tại hoặc đã bị xóa!'
+        message: 'Repost không tồn tại, đã bị xóa hoặc bài viết gốc đã bị xóa!'
       });
     }
 

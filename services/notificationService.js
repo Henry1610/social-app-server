@@ -86,15 +86,9 @@ const createSingleNotification = async ({
   now
 }) => {
   try {
-    const actor = await prisma.user.findUnique({
-      where: { id: actorId },
-      select: ACTOR_SELECT
-    });
-
-    if (!actor) {
-      console.warn(`Actor not found: ${actorId}`);
-      return null;
-    }
+    const actorFull = await getUserById(actorId);
+    // Chỉ lấy các field cần thiết cho actor (loại bỏ privacySettings và createdAt)
+    const { privacySettings, createdAt, ...actor } = actorFull;
 
     const notification = {
       userId,
