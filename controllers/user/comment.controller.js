@@ -1,6 +1,6 @@
 import prisma from "../../utils/prisma.js";
 import { postEvents } from "../../socket/events/postEvents.js";
-import { checkCommentPermission } from "../../services/commentService.js";
+import { checkCommentPermission, fetchComments, createComment } from "../../services/commentService.js";
 
 /**
  * GET /api/user/comments/posts/:id
@@ -12,11 +12,10 @@ export const getCommentsByPost = async (req, res) => {
   try {
     const { id } = req.params;
     const postId = Number(id);
-    
+
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     const sortBy = req.query.sortBy || 'desc'; // 'desc' (mới nhất) hoặc 'asc' (cũ nhất)
-    const skip = (page - 1) * limit;
 
     // Kiểm tra post có tồn tại không
     const post = await prisma.post.findFirst({
@@ -34,53 +33,22 @@ export const getCommentsByPost = async (req, res) => {
       });
     }
 
-    // Lấy comments và tổng số comments song song (parallel) để tối ưu performance
-    const [comments, totalComments] = await Promise.all([
-      // Lấy danh sách comments với pagination
-      prisma.comment.findMany({
-        where: {
-          postId: postId,
-          deletedAt: null
-        },
-        include: {
-          user: {
-            select: { id: true, username: true, fullName: true, avatarUrl: true }
-          },
-          _count: {
-            select: {
-              replies: true   // Số lượng reply của comment này
-            }
-          }
-        },
-        orderBy: { createdAt: sortBy },
-        skip: skip,
-        take: limit
-      }),
-      // Đếm tổng số comments (để tính pagination metadata)
-      prisma.comment.count({
-        where: {
-          postId: postId,
-          deletedAt: null
-        }
-      })
-    ]);
-
-    // Tính toán thông tin pagination để frontend biết còn comments không
-    const totalPages = Math.ceil(totalComments / limit);
-    const hasNextPage = page < totalPages;
-    const hasPrevPage = page > 1;
+    // Lấy comments bằng service
+    const result = await fetchComments({
+      where: {
+        postId: postId,
+        deletedAt: null
+      },
+      page,
+      limit,
+      sortBy,
+      includeMentions: false
+    });
 
     res.json({
       success: true,
-      comments,
-      pagination: {
-        currentPage: page,
-        limit: limit,
-        totalComments,
-        totalPages,
-        hasNextPage,  // Frontend dùng để biết có thể load thêm không
-        hasPrevPage
-      }
+      comments: result.comments,
+      pagination: result.pagination
     });
 
   } catch (error) {
@@ -91,9 +59,8 @@ export const getCommentsByPost = async (req, res) => {
     });
   }
 };
-/**
- * POST /api/user/comments/posts/:ids
- */
+
+//POST /api/user/comments/posts/:id
 export const commentPost = async (req, res) => {
   try {
     const { id } = req.params;
@@ -123,25 +90,14 @@ export const commentPost = async (req, res) => {
         success: false,
         message: permissionCheck.message
       });
-      }
+    }
 
-    // Tạo bình luận mới
-    const newComment = await prisma.comment.create({
-      data: {
-        content,
-        postId: postId,
-        userId: userId
-      },
-      include: {
-        user: {
-          select: { id: true, username: true, fullName: true, avatarUrl: true }
-        },
-        _count: {
-          select: {
-            replies: true
-          }
-        }
-      }
+    // Tạo bình luận mới bằng service
+    const newComment = await createComment({
+      type: 'post',
+      entityId: postId,
+      userId,
+      content
     });
 
     // Gửi thông báo cho chủ post (nếu không phải chính họ comment)
@@ -177,9 +133,9 @@ export const commentPost = async (req, res) => {
  */
 export const deleteComment = async (req, res) => {
   try {
-  const { id } = req.params;
+    const { id } = req.params;
     const commentId = Number(id);
-  const userId = req.user.id;
+    const userId = req.user.id;
 
     // Kiểm tra bình luận có tồn tại và thuộc về user
     const comment = await prisma.comment.findFirst({
@@ -227,12 +183,11 @@ export const getCommentsByRepost = async (req, res) => {
   try {
     const { id } = req.params;
     const repostId = Number(id);
-    
+
     // Parse query parameters với giá trị mặc định
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     const sortBy = req.query.sortBy || 'desc';
-    const skip = (page - 1) * limit;
 
     // Kiểm tra repost có tồn tại không và post gốc còn tồn tại
     const repost = await prisma.repost.findFirst({
@@ -254,54 +209,22 @@ export const getCommentsByRepost = async (req, res) => {
       });
     }
 
-    // Lấy comments và tổng số comments song song (parallel) để tối ưu performance
-    const [comments, totalComments] = await Promise.all([
-      // Lấy danh sách comments với pagination
-      prisma.comment.findMany({
-        where: {
-          repostId: repostId,
-          deletedAt: null
-        },
-      include: {
-        user: {
-          select: { id: true, username: true, fullName: true, avatarUrl: true }
-        },
-        _count: {
-          select: {
-            replies: true,
-            mentions: true
-          }
-        }
-        },
-        orderBy: { createdAt: sortBy },
-        skip: skip,
-        take: limit
-      }),
-      // Đếm tổng số comments (để tính pagination metadata)
-      prisma.comment.count({
-        where: {
-          repostId: repostId,
-          deletedAt: null
-        }
-      })
-    ]);
-
-    // Tính toán thông tin pagination để frontend biết còn comments không
-    const totalPages = Math.ceil(totalComments / limit);
-    const hasNextPage = page < totalPages;
-    const hasPrevPage = page > 1;
+    // Lấy comments bằng service (repost cần include mentions)
+    const result = await fetchComments({
+      where: {
+        repostId: repostId,
+        deletedAt: null
+      },
+      page,
+      limit,
+      sortBy,
+      includeMentions: true
+    });
 
     res.json({
       success: true,
-      comments,
-      pagination: {
-        currentPage: page,
-        limit: limit,
-        totalComments,
-        totalPages,
-        hasNextPage,  // Frontend dùng để biết có thể load thêm không
-        hasPrevPage
-      }
+      comments: result.comments,
+      pagination: result.pagination
     });
   } catch (error) {
     console.error('Error getting repost comments:', error);
@@ -321,7 +244,7 @@ export const getCommentsByRepost = async (req, res) => {
  */
 export const commentRepost = async (req, res) => {
   try {
-  const { id } = req.params;
+    const { id } = req.params;
     const repostId = Number(id);
     const { content } = req.body;
     const userId = req.user.id;
@@ -341,7 +264,7 @@ export const commentRepost = async (req, res) => {
         post: true // Lấy post gốc để check quyền comment
       }
     });
-    
+
     if (!repost) {
       return res.status(404).json({
         success: false,
@@ -358,23 +281,12 @@ export const commentRepost = async (req, res) => {
       });
     }
 
-    // Tạo bình luận mới cho repost
-    const newComment = await prisma.comment.create({
-      data: {
-        content,
-        repostId: repostId,
-        userId: userId
-      },
-      include: {
-        user: {
-          select: { id: true, username: true, fullName: true, avatarUrl: true }
-        },
-        _count: {
-          select: {
-            replies: true
-          }
-        }
-      }
+    // Tạo bình luận mới cho repost bằng service
+    const newComment = await createComment({
+      type: 'repost',
+      entityId: repostId,
+      userId,
+      content
     });
 
     // Gửi thông báo cho chủ post gốc (nếu không phải chính họ comment)

@@ -4,6 +4,11 @@ import {
   checkAdminPermission,
   getConversationWithAccess,
   findOrCreateDirectConversation,
+  fetchConversations,
+  createGroupConversation,
+  getConversationMembersList,
+  addConversationMember,
+  removeConversationMember,
 } from "../../services/conversationService.js";
 import { createSystemMessage } from "../../services/systemMessageService.js";
 
@@ -14,101 +19,8 @@ export const getConversations = async (req, res) => {
     const userId = req.user.id;
     const { page = 1, limit = 20 } = req.query;
 
-    // Lấy conversations mà user là thành viên và đã có tin nhắn
-    const conversations = await prisma.conversation.findMany({
-      where: {
-        members: {
-          some: {
-            userId: userId,            
-            leftAt: null, // Chưa rời khỏi conversation
-          },
-        },
-        messages: {
-          some: {}, // Có ít nhất 1 tin nhắn
-        },
-      },
-      include: {
-        members: {
-          where: {
-            leftAt: null,
-          },
-          include: {
-            user: {
-              select: {
-                id: true,
-                username: true,
-                fullName: true,
-                avatarUrl: true,
-                isOnline: true,
-                lastSeen: true,
-                privacySettings: {
-                  select: {
-                    showOnlineStatus: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        // Lấy tin nhắn cuối cùng
-        messages: {
-          take: 1,
-          orderBy: {
-            createdAt: 'desc',
-          },
-          include: {
-            sender: {
-              select: {
-                id: true,
-                username: true,
-                fullName: true,
-              },
-            },
-          },
-        },
-        // Đếm số tin nhắn chưa đọc (chỉ tin nhắn không phải của user hiện tại)
-        _count: {
-          select: {
-            messages: {
-              where: {
-                senderId: {
-                  not: userId, // Chỉ đếm tin nhắn không phải của user hiện tại
-                },
-                states: {
-                  some: {
-                    userId: userId,
-                    status: {
-                      in: ['SENT', 'DELIVERED'] // Đếm tin nhắn có status SENT hoặc DELIVERED (chưa đọc)
-                    },
-                  },
-                },
-                deletedAt: null,
-              },
-            },
-          },
-        },
-      },
-      orderBy: {
-        lastMessageAt: 'desc',
-      },
-      take: parseInt(limit),
-      skip: (parseInt(page) - 1) * parseInt(limit),
-    });
-
-    // Đếm tổng số conversations có tin nhắn
-    const totalCount = await prisma.conversation.count({
-      where: {
-        members: {
-          some: {
-            userId: userId,
-            leftAt: null,
-          },
-        },
-        messages: {
-          some: {}, // Có ít nhất 1 tin nhắn
-        },
-      },
-    });
+    // Lấy conversations bằng service
+    const { conversations, totalCount } = await fetchConversations(userId, { page, limit });
 
     res.json({
       success: true,
@@ -191,44 +103,12 @@ export const createConversation = async (req, res) => {
         });
       }
     } else {
-      // Tạo GROUP conversation mới
-      conversation = await prisma.conversation.create({
-        data: {
-          type,
-          name,
-          avatarUrl,
-          createdBy: userId,
-          members: {
-            create: [
-              // Thêm người tạo vào conversation
-              {
-                userId,
-                role: 'ADMIN',
-              },
-              // Thêm các participant khác
-              ...participantIds.map((participantId) => ({
-                userId: participantId,
-                role: 'MEMBER',
-              })),
-            ],
-          },
-        },
-        include: {
-          members: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  username: true,
-                  fullName: true,
-                  avatarUrl: true,
-                  isOnline: true,
-                  lastSeen: true,
-                },
-              },
-            },
-          },
-        },
+      // Tạo GROUP conversation mới bằng service
+      conversation = await createGroupConversation({
+        createdBy: userId,
+        name,
+        avatarUrl,
+        participantIds
       });
 
       // Tạo tin nhắn hệ thống khi tạo nhóm
@@ -328,28 +208,8 @@ export const getConversationMembers = async (req, res) => {
       });
     }
 
-    const members = await prisma.conversationMember.findMany({
-      where: {
-        conversationId: parseInt(conversationId),
-        leftAt: null,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true,
-            fullName: true,
-            avatarUrl: true,
-            privacySettings: {
-              select: {
-                whoCanMessage: true,
-                showOnlineStatus: true,
-              },
-            },
-          },
-        },
-      },
-    });
+    // Lấy danh sách members bằng service
+    const members = await getConversationMembersList(conversationId);
 
     res.json({
       success: true,
@@ -409,23 +269,11 @@ export const addMember = async (req, res) => {
       });
     }
 
-    // Thêm member mới
-    const newMemberRecord = await prisma.conversationMember.create({
-      data: {
-        conversationId: parseInt(conversationId),
-        userId: newMemberId,
-        role: 'MEMBER',
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true,
-            fullName: true,
-            avatarUrl: true,
-          },
-        },
-      },
+    // Thêm member mới bằng service
+    const newMemberRecord = await addConversationMember({
+      conversationId,
+      userId: newMemberId,
+      role: 'MEMBER'
     });
 
     res.json({
@@ -464,17 +312,10 @@ export const removeMember = async (req, res) => {
       });
     }
 
-    // Cập nhật thời gian rời khỏi nhóm
-    await prisma.conversationMember.update({
-      where: {
-        conversationId_userId: {
-          conversationId: parseInt(conversationId),
-          userId: parseInt(memberIdToRemove),
-        },
-      },
-      data: {
-        leftAt: new Date(),
-      },
+    // Xóa member bằng service (soft delete)
+    await removeConversationMember({
+      conversationId,
+      userId: memberIdToRemove
     });
 
     res.json({

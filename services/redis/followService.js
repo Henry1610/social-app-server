@@ -18,12 +18,9 @@ export const getFollowersList = async (userId) => {
 
   const cached = await redisClient.get(cacheKey);
   if (cached) {
-    
+
     return JSON.parse(cached);
   }
-
-  
-
   const followersData = await getFollowersByUserId(userId);
   const followers = followersData.map(f => f.follower);
 
@@ -39,12 +36,9 @@ export const getFollowingList = async (userId) => {
 
   const cached = await redisClient.get(cacheKey);
   if (cached) {
-    
+
     return JSON.parse(cached);
   }
-
-  
-
   const followingData = await getFollowingByUserId(userId);
   const following = followingData.map(f => f.following);
 
@@ -57,82 +51,80 @@ export const getFollowingList = async (userId) => {
 // Atomic update cho follow action
 export const updateFollowCacheAtomic = async (followerId, followingId, action) => {
   const multi = redisClient.multi();
-  
+
   if (action === 'follow') {
     // 1. Update counts (nếu tồn tại)
     const followerCountKey = `user:${followingId}:followersCount`;
     const followingCountKey = `user:${followerId}:followingCount`;
-    
+
     const [followerCount, followingCount] = await Promise.all([
       redisClient.get(followerCountKey),
       redisClient.get(followingCountKey)
     ]);
-    
+
     if (followerCount !== null) {
       multi.incr(followerCountKey);
       multi.expire(followerCountKey, CACHE_TTL.COUNT);
     }
-    
+
     if (followingCount !== null) {
       multi.incr(followingCountKey);
       multi.expire(followingCountKey, CACHE_TTL.COUNT);
     }
-    
+
     // 2. Xóa cache list để force refresh
     multi.del(`user:${followingId}:followers`);
     multi.del(`user:${followerId}:following`);
-    
+
     // 3. Xóa status cache
     multi.del(`follow:status:${followerId}:${followingId}`);
-    
+
   } else if (action === 'unfollow') {
     const followerCountKey = `user:${followingId}:followersCount`;
     const followingCountKey = `user:${followerId}:followingCount`;
-    
+
     const [followerCount, followingCount] = await Promise.all([
       redisClient.get(followerCountKey),
       redisClient.get(followingCountKey)
     ]);
-    
+
     if (followerCount !== null) {
       multi.decr(followerCountKey);
       multi.expire(followerCountKey, CACHE_TTL.COUNT);
     }
-    
+
     if (followingCount !== null) {
       multi.decr(followingCountKey);
       multi.expire(followingCountKey, CACHE_TTL.COUNT);
     }
-    
+
     multi.del(`user:${followingId}:followers`);
     multi.del(`user:${followerId}:following`);
     multi.del(`follow:status:${followerId}:${followingId}`);
   }
-  
+
   const results = await multi.exec();
-  
+
   if (results.some(result => result[0] !== null)) {
     console.error(' Redis transaction failed:', results);
     throw new Error('Redis transaction failed');
   }
-  
+
   return results;
 };
 
 // Invalidate toàn bộ cache của user
 export const invalidateUserCache = async (userId) => {
   const multi = redisClient.multi();
-  
+
   multi.del(`user:${userId}:followers`);
   multi.del(`user:${userId}:following`);
   multi.del(`user:${userId}:followersCount`);
   multi.del(`user:${userId}:followingCount`);
   multi.del(`user:${userId}:postCount`);
   multi.del(`user:${userId}:stats`);
-  
+
   await multi.exec();
-  
-  
 };
 
 // ============ STATS SERVICE ============
@@ -143,7 +135,7 @@ export const getFollowStatsService = async (userId) => {
 
   // Followers count
   let followerCount = await redisClient.get(followersCountKey);
-  
+
   if (followerCount === null) {
     followerCount = await prisma.follow.count({ where: { followingId: userId } });
     await redisClient.set(followersCountKey, String(followerCount), 'EX', CACHE_TTL.COUNT);

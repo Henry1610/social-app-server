@@ -219,3 +219,220 @@ export const removeFollowerService = async (followerId, followingId) => {
     return { success: false, message: "Lỗi server khi xóa người theo dõi!" };
   }
 };
+
+/**
+ * Lấy danh sách follow requests của user
+ * @param {number} userId - ID của user
+ * @returns {Promise<Array>} Danh sách follow requests
+ */
+export const getFollowRequestsList = async (userId) => {
+  return await prisma.followRequest.findMany({
+    where: { toUserId: userId },
+    select: {
+      id: true,
+      fromUser: {
+        select: { id: true, username: true, fullName: true, avatarUrl: true }
+      },
+      createdAt: true
+    },
+    orderBy: { createdAt: 'desc' }
+  });
+};
+
+/**
+ * Kiểm tra và lấy follow request
+ * @param {number} fromUserId - ID của người gửi request
+ * @param {number} toUserId - ID của người nhận request
+ * @returns {Promise<Object|null>} Follow request object hoặc null
+ */
+export const findFollowRequest = async (fromUserId, toUserId) => {
+  return await prisma.followRequest.findUnique({
+    where: {
+      fromUserId_toUserId: {
+        fromUserId,
+        toUserId
+      }
+    },
+    select: { id: true }
+  });
+};
+
+/**
+ * Kiểm tra quyền xem followers/followings dựa trên privacy settings
+ * @param {number} currentUserId - ID của user hiện tại
+ * @param {number} targetUserId - ID của target user
+ * @param {Object} user - User object với privacySettings
+ * @returns {Promise<boolean>} true nếu có quyền xem
+ */
+export const canViewFollowList = async (currentUserId, targetUserId, user) => {
+  // Nếu xem chính mình thì luôn được
+  if (currentUserId === targetUserId) {
+    return true;
+  }
+
+  // Nếu tài khoản public thì ai cũng xem được
+  if (!user?.privacySettings?.isPrivate) {
+    return true;
+  }
+
+  // Nếu tài khoản private, kiểm tra xem có đang follow không
+  return await isFollowing(currentUserId, targetUserId);
+};
+
+/**
+ * Lấy follow status của user
+ * @param {number} currentUserId - ID của user hiện tại
+ * @param {number} targetUserId - ID của target user
+ * @returns {Promise<Object>} Follow status object
+ */
+export const getFollowStatusService = async (currentUserId, targetUserId) => {
+  const user = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: {
+      id: true,
+      privacySettings: {
+        select: { isPrivate: true }
+      }
+    }
+  });
+
+  if (!user) {
+    return null;
+  }
+
+  if (user.id === currentUserId) {
+    // Nếu đang xem profile của chính mình
+    const incomingFollowRequests = await prisma.followRequest.findMany({
+      where: { toUserId: currentUserId },
+      include: {
+        fromUser: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            avatarUrl: true
+          }
+        }
+      }
+    });
+
+    return {
+      isSelf: true,
+      isFollowing: false,
+      incomingRequests: incomingFollowRequests
+    };
+  }
+
+  // Kiểm tra các trạng thái follow
+  const [isFollowingUser, isFollower, followRequest, incomingFollowRequest] = await Promise.all([
+    isFollowing(currentUserId, user.id),
+    isFollowing(user.id, currentUserId),
+    findFollowRequest(currentUserId, user.id),
+    findFollowRequest(user.id, currentUserId)
+  ]);
+
+  return {
+    isSelf: false,
+    isPrivate: user.privacySettings?.isPrivate || false,
+    isFollowing: isFollowingUser,
+    isPending: !!followRequest,
+    isFollower: isFollower,
+    hasIncomingRequest: !!incomingFollowRequest
+  };
+};
+
+/**
+ * Lấy danh sách người bạn follow cũng đang follow target user
+ * @param {number} currentUserId - ID của user hiện tại
+ * @param {number} targetUserId - ID của target user
+ * @returns {Promise<Array>} Danh sách users
+ */
+export const getAlsoFollowingService = async (currentUserId, targetUserId) => {
+  // Lấy danh sách người currentUser đang follow
+  const myFollowings = await prisma.follow.findMany({
+    where: { followerId: currentUserId },
+    select: { followingId: true }
+  });
+  const myFollowingIds = myFollowings.map(f => f.followingId);
+
+  if (myFollowingIds.length === 0) {
+    return [];
+  }
+
+  // Lấy danh sách followers của target user mà cũng được follow bởi currentUser
+  const targetFollowers = await prisma.follow.findMany({
+    where: {
+      followingId: targetUserId,
+      followerId: { in: myFollowingIds }
+    },
+    select: {
+      follower: {
+        select: { id: true, username: true, fullName: true, avatarUrl: true }
+      }
+    }
+  });
+
+  return targetFollowers.map(f => f.follower);
+};
+
+/**
+ * Lấy gợi ý follow (2nd degree connections)
+ * @param {number} currentUserId - ID của user hiện tại
+ * @param {number} limit - Số lượng gợi ý (mặc định: 10)
+ * @returns {Promise<Array>} Danh sách gợi ý users
+ */
+export const getFollowSuggestionsService = async (currentUserId, limit = 10) => {
+  // Lấy danh sách những người mà currentUser đang follow
+  const currentUserFollowings = await prisma.follow.findMany({
+    where: { followerId: currentUserId },
+    select: { followingId: true }
+  });
+  const followingIds = currentUserFollowings.map(f => f.followingId);
+
+  if (followingIds.length === 0) {
+    return [];
+  }
+
+  // Tìm những người được follow bởi những người mà currentUser đang follow
+  const suggestions = await prisma.follow.findMany({
+    where: {
+      followerId: { in: followingIds },
+      followingId: { notIn: [...followingIds, currentUserId] }
+    },
+    select: {
+      following: {
+        select: { id: true, username: true, fullName: true, avatarUrl: true }
+      }
+    },
+    distinct: ['followingId'],
+    take: limit
+  });
+
+  return suggestions.map(s => s.following);
+};
+
+/**
+ * Hủy follow request
+ * @param {number} currentUserId - ID của user hiện tại
+ * @param {number} targetUserId - ID của target user
+ * @returns {Promise<Object>} Result object
+ */
+export const cancelFollowRequestService = async (currentUserId, targetUserId) => {
+  const existingRequest = await findFollowRequest(currentUserId, targetUserId);
+
+  if (!existingRequest) {
+    return {
+      success: false,
+      message: "Không có yêu cầu theo dõi nào để hủy."
+    };
+  }
+
+  await prisma.followRequest.delete({
+    where: { id: existingRequest.id }
+  });
+
+  return {
+    success: true,
+    message: "Đã hủy yêu cầu theo dõi."
+  };
+};

@@ -37,8 +37,6 @@ export const getMessages = async (req, res) => {
   }
 };
 
-
-
 // Xóa tin nhắn
 export const deleteMessage = async (req, res) => {
   try {
