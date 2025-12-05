@@ -1,9 +1,8 @@
 import express from 'express';
-import { getPublicProfile } from '../../controllers/user/search.controller.js';
+import { getPublicProfile, updatePrivacySettings } from '../../controllers/user/profile.controller.js';
 import { uploadAvatar } from '../../controllers/user/upload.controller.js';
 import { getUserPostsPreview, getUserSavedPostsReview } from '../../controllers/user/post.controller.js';
 import { getUserReposts } from '../../controllers/user/repost.controller.js';
-import { updatePrivacySettings } from '../../controllers/user/profile.controller.js';
 import { getMe } from '../../controllers/authController.js';
 import { resolveUser } from '../../middlewares/resolveUser.js';
 import { upload } from '../../middlewares/upload.js';

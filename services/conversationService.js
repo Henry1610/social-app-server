@@ -40,16 +40,41 @@ export const findOrCreateDirectConversation = async (userId, participantId) => {
   // Kiểm tra conversation đã tồn tại chưa
   const existingConversation = await prisma.conversation.findFirst({
     where: {
-      type: 'DIRECT',
-      members: {
-        every: {
-          userId: {
-            in: [userId, participantId],
+      type: "DIRECT",
+
+      AND: [
+        // 1. conversation phải có user hiện tại
+        {
+          members: {
+            some: {
+              userId: userId,
+              leftAt: null,
+            }
           },
-          leftAt: null,
         },
-      },
+
+        // 2. conversation phải có participant
+        {
+          members: {
+            some: {
+              userId: participantId,
+              leftAt: null,
+            },
+          },
+        },
+
+        // 3. mọi member đều phải thuộc 2 người này & chưa rời
+        {
+          members: {
+            every: {
+              userId: { in: [userId, participantId] },
+              leftAt: null,
+            },
+          },
+        }
+      ],
     },
+
     include: {
       members: {
         include: {

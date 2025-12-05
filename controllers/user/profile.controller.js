@@ -1,5 +1,32 @@
 import prisma from "../../utils/prisma.js";
 
+// GET /api/user/:username/profile
+export const getPublicProfile = async (req, res) => {
+  try {
+    const userId = req.resolvedUserId;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        username: true,
+        fullName: true,
+        avatarUrl: true,
+        createdAt: true,
+        isOnline: true,
+        lastSeen: true,
+        privacySettings: true
+      },
+    });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy người dùng' });
+    }
+    return res.json({ success: true, user });
+  } catch (error) {
+    console.error('Get public profile error:', error);
+    return res.status(500).json({ success: false, message: 'Lỗi server' });
+  }
+};
+
 // PUT /api/user/profile/privacy
 export const updatePrivacySettings = async (req, res) => {
   try {

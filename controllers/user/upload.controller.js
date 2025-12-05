@@ -39,7 +39,6 @@ export const uploadChatMedia = async (req, res) => {
 
 export const uploadPostMedia = async (req, res) => {
   try {
-    const userId = req.user.id
     const files = req.files || []
     if (files.length === 0) return res.status(400).json({ success: false, message: 'Không có file' })
 

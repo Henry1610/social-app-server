@@ -9,7 +9,7 @@ export const searchUsers = async (req, res) => {
       return res.json({ success: true, users: [] });
     }
 
-    const currentUserId = req.user?.id;
+    const currentUserId = req.user.id;
 
     const users = await prisma.user.findMany({
       where: {
@@ -77,10 +77,7 @@ export const searchUsers = async (req, res) => {
 // POST /api/user/search/selection
 export const recordSearchSelection = async (req, res) => {
   try {
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(401).json({ success: false, message: "Unauthorized" });
-    }
+    const userId = req.user.id;
 
     const { type, user } = req.body || {};
     if (!type) {
@@ -94,41 +91,11 @@ export const recordSearchSelection = async (req, res) => {
     return res.status(500).json({ success: false, message: "Lỗi server" });
   }
 };
-// GET /api/user/:username/profile
-export const getPublicProfile = async (req, res) => {
-  try {
-    const userId = req.resolvedUserId;
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        username: true,
-        fullName: true,
-        avatarUrl: true,
-        createdAt: true,
-        isOnline: true,
-        lastSeen: true,
-        createdAt: true,
-        privacySettings: true
-      },
-    });
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'Không tìm thấy người dùng' });
-    }
-    return res.json({ success: true, user });
-  } catch (error) {
-    console.error('Get public profile error:', error);
-    return res.status(500).json({ success: false, message: 'Lỗi server' });
-  }
-};
 
 // GET /api/user/search/history
 export const getMySearchHistory = async (req, res) => {
   try {
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(401).json({ success: false, message: "Unauthorized" });
-    }
+    const userId = req.user.id;
     const page = parseInt(req.query.page ?? "1", 10) || 1;
     const limit = parseInt(req.query.limit ?? "10", 10) || 10;
     const data = await getSearchHistory(userId, page, limit);
@@ -142,10 +109,7 @@ export const getMySearchHistory = async (req, res) => {
 // DELETE /api/user/search/history
 export const clearMySearchHistory = async (req, res) => {
   try {
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(401).json({ success: false, message: "Unauthorized" });
-    }
+    const userId = req.user.id;
     await clearSearchHistory(userId);
     return res.json({ success: true });
   } catch (error) {
@@ -157,10 +121,7 @@ export const clearMySearchHistory = async (req, res) => {
 // DELETE /api/user/search/history/:type/:id
 export const deleteSearchHistoryItem = async (req, res) => {
   try {
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(401).json({ success: false, message: "Unauthorized" });
-    }
+    const userId = req.user.id;
     const { type, id } = req.params;
     if (!type || !id) {
       return res.status(400).json({ success: false, message: "Thiếu tham số" });

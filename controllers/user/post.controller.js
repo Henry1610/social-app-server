@@ -56,7 +56,7 @@ export const createPost = async (req, res) => {
 export const getMyPostById = async (req, res) => {
   try {
     const { postId } = req.params;
-    const currentUserId = req.user?.id || null;
+    const currentUserId = req.user.id;
 
     // Validate postId
     const parsedPostId = Number(postId);
@@ -307,12 +307,12 @@ export const unsavePost = async (req, res) => {
 export const getUserSavedPostsReview = async (req, res) => {
   try {
     const targetUserId = Number(req.resolvedUserId);
-    const currentUserId = req.user?.id || null;
+    const currentUserId = req.user.id;
     const { page = 1, limit = 10 } = req.query;
     const skip = (page - 1) * limit;
 
     // Chỉ cho phép xem saved posts của chính mình
-    if (!currentUserId || targetUserId !== currentUserId) {
+    if (targetUserId !== currentUserId) {
       return res.status(403).json({
         success: false,
         message: 'Bạn chỉ có thể xem bài viết đã lưu của chính mình!'
@@ -340,7 +340,7 @@ export const getUserSavedPostsReview = async (req, res) => {
 export const getUserPostsPreview = async (req, res) => {
   try {
     const targetUserId = Number(req.resolvedUserId);
-    const currentUserId = req.user?.id || null;
+    const currentUserId = req.user.id;
     const { page = 1, limit = 12 } = req.query;
     const skip = (page - 1) * limit;
 

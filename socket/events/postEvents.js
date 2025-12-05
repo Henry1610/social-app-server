@@ -26,7 +26,28 @@ postEvents.on("comment_created", async ({ actor, postId }) => {
     console.error("Error in comment_created event:", error);
   }
 });
+postEvents.on("repost_created", async ({ actor, postId }) => {
+  try {
+    const post = await prisma.post.findUnique({
+      where: { id: postId },
+      select: { userId: true }
+    });
 
+    if (!post || post.userId === actor.id) {
+      return;
+    }
+
+    await createNotification({
+      userId: post.userId,
+      actorId: actor.id,
+      type: "REPOST",
+      targetType: "POST",
+      targetId: postId,
+    });
+  } catch (error) {
+    console.error("Error in repost_created event:", error);
+  }
+});
 postEvents.on("reaction_created", async ({ actor, targetId, targetType }) => {
   try {
     let targetUserId = null;

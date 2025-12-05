@@ -116,6 +116,20 @@ export const acceptFollowRequest = async (req, res) => {
         }
 
         const result = await acceptFollowRequestService(currentUserId, targetUserId);
+        
+        // Emit event để tạo notification
+        const actor = await prisma.user.findUnique({
+            where: { id: currentUserId },
+            select: { id: true, username: true, fullName: true, avatarUrl: true }
+        });
+        
+        if (actor) {
+            followEvents.emit("follow_request_accepted", {
+                actor,
+                targetUserId: targetUserId
+            });
+        }
+        
         res.json({
             success: true,
             message: "Bạn đã chấp nhận yêu cầu theo dõi.",
@@ -147,6 +161,20 @@ export const rejectFollowRequest = async (req, res) => {
         
         // Xử lý từ chối follow request
         const result = await rejectFollowRequestService(targetUserId, currentUserId);
+        
+        // Emit event để tạo notification
+        const actor = await prisma.user.findUnique({
+            where: { id: currentUserId },
+            select: { id: true, username: true, fullName: true, avatarUrl: true }
+        });
+        
+        if (actor) {
+            followEvents.emit("follow_request_rejected", {
+                actor,
+                targetUserId: targetUserId
+            });
+        }
+        
         res.json(result);
     } catch (error) {
         console.error('Error rejecting follow request:', error);
