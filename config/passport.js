@@ -60,7 +60,7 @@ passport.use(new FacebookStrategy(
               isPrivate: false,
               whoCanMessage: 'everyone',
               whoCanTagMe: 'everyone',
-              whoCanFindByUsername: true,
+              whoCanFindByUsername: 'everyone',
               showOnlineStatus: true,
             },
           });

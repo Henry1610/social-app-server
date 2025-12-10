@@ -86,7 +86,7 @@ export const verifyOtpAndRegister = async (req, res) => {
             isPrivate: false,
             whoCanMessage: "everyone",
             whoCanTagMe: "everyone",
-            whoCanFindByUsername: true,
+            whoCanFindByUsername: "everyone",
             showOnlineStatus: true,
           },
         },
