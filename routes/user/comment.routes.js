@@ -1,5 +1,5 @@
 import express from 'express';
-import { commentPost, getCommentsByPost, deleteComment, commentRepost, getCommentsByRepost } from '../../controllers/user/comment.controller.js';
+import { commentPost, getCommentsByPost, deleteComment, commentRepost, getCommentsByRepost, replyComment, getRepliesByComment } from '../../controllers/user/comment.controller.js';
 
 const router = express.Router();
 
@@ -12,5 +12,7 @@ router.delete('/posts/:id', deleteComment);
 router.get('/reposts/:id', getCommentsByRepost);
 router.post('/reposts/:id', commentRepost);
 router.delete('/reposts/:id', deleteComment);
+router.post('/:id/reply', replyComment);
+router.get('/:id/replies', getRepliesByComment);
 
 export default router;

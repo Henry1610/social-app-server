@@ -1,6 +1,6 @@
 import prisma from "../../utils/prisma.js";
 import { postEvents } from "../../socket/events/postEvents.js";
-import { checkCommentPermission, fetchComments, createComment } from "../../services/commentService.js";
+import { checkCommentPermission, fetchComments, createComment, createReplyComment, fetchReplies } from "../../services/commentService.js";
 
 /**
  * GET /api/user/comments/posts/:id
@@ -33,10 +33,11 @@ export const getCommentsByPost = async (req, res) => {
       });
     }
 
-    // Lấy comments bằng service
+    // Lấy comments gốc (chỉ lấy comments không có parentId)
     const result = await fetchComments({
       where: {
         postId: postId,
+        parentId: null, // Chỉ lấy comments gốc
         deletedAt: null
       },
       page,
@@ -209,10 +210,11 @@ export const getCommentsByRepost = async (req, res) => {
       });
     }
 
-    // Lấy comments bằng service (repost cần include mentions)
+    // Lấy comments gốc (chỉ lấy comments không có parentId)
     const result = await fetchComments({
       where: {
         repostId: repostId,
+        parentId: null, // Chỉ lấy comments gốc
         deletedAt: null
       },
       page,
@@ -313,6 +315,147 @@ export const commentRepost = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Lỗi server khi thêm bình luận!'
+    });
+  }
+};
+
+/**
+ * POST /api/user/comments/:id/reply
+ * req.params.id: parentCommentId
+ * req.body.content: nội dung reply
+ */
+export const replyComment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const parentCommentId = Number(id);
+    const { content } = req.body;
+    const userId = req.user.id;
+
+    // Lấy comment cha để kiểm tra và lấy thông tin post/repost
+    const parentComment = await prisma.comment.findUnique({
+      where: { id: parentCommentId },
+      include: {
+        post: {
+          select: { id: true, userId: true, whoCanComment: true, deletedAt: true }
+        },
+        repost: {
+          include: {
+            post: {
+              select: { id: true, userId: true, whoCanComment: true, deletedAt: true }
+            }
+          }
+        }
+      }
+    });
+
+    if (!parentComment || parentComment.deletedAt) {
+      return res.status(404).json({
+        success: false,
+        message: 'Comment không tồn tại hoặc đã bị xóa!'
+      });
+    }
+
+    // Kiểm tra quyền comment dựa trên post (nếu là comment của post) hoặc post gốc (nếu là comment của repost)
+    const post = parentComment.post || (parentComment.repost && parentComment.repost.post);
+    if (!post || post.deletedAt) {
+      return res.status(404).json({
+        success: false,
+        message: 'Bài viết không tồn tại hoặc đã bị xóa!'
+      });
+    }
+
+    const permissionCheck = await checkCommentPermission(userId, post);
+    if (!permissionCheck.allowed) {
+      return res.status(403).json({
+        success: false,
+        message: permissionCheck.message
+      });
+    }
+
+    // Tạo reply comment
+    const newReply = await createReplyComment({
+      parentCommentId,
+      userId,
+      content
+    });
+
+    // Gửi thông báo cho chủ comment (nếu không phải chính họ reply)
+    if (parentComment.userId !== userId) {
+      postEvents.emit("reply_created", {
+        actor: {
+          id: userId,
+          username: newReply.user.username,
+          fullName: newReply.user.fullName,
+          avatarUrl: newReply.user.avatarUrl
+        },
+        commentId: parentCommentId,
+        postId: post.id
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Phản hồi đã được thêm!',
+      reply: newReply
+    });
+  } catch (error) {
+    console.error('Error replying to comment:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Lỗi server khi thêm phản hồi!'
+    });
+  }
+};
+
+/**
+ * GET /api/user/comments/:id/replies
+ * Lấy danh sách replies của một comment với pagination
+ * req.params.id: parentCommentId
+ * req.query: page, limit, sortBy
+ */
+export const getRepliesByComment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const parentCommentId = Number(id);
+
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const sortBy = req.query.sortBy || 'desc';
+
+    // Kiểm tra comment cha có tồn tại không
+    const parentComment = await prisma.comment.findFirst({
+      where: {
+        id: parentCommentId,
+        deletedAt: null
+      },
+      select: { id: true }
+    });
+
+    if (!parentComment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Comment không tồn tại hoặc đã bị xóa!'
+      });
+    }
+
+    // Lấy replies bằng service
+    const result = await fetchReplies({
+      parentId: parentCommentId,
+      page,
+      limit,
+      sortBy
+    });
+
+    res.json({
+      success: true,
+      replies: result.replies,
+      pagination: result.pagination
+    });
+  } catch (error) {
+    console.error('Error getting replies:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi lấy phản hồi!'
     });
   }
 };

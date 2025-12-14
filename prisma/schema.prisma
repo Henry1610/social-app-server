@@ -44,8 +44,6 @@ enum PrivacyOption {
 enum TargetType {
   POST
   COMMENT
-  STORY
-  REEL
   REPOST
 }
 
@@ -92,11 +90,9 @@ model User {
 
   // Relations (Phase 1 only)
   privacySettings         UserPrivacySetting?
-  passwordResets          PasswordReset[]
   posts                   Post[]
   comments                Comment[]
-  ches               Reaction[]
-  mentions                Mention[]
+  reactions               Reaction[]
   reposts                 Repost[]
   saved_posts             SavedPost[]
   postViews               PostView[]           @relation("UserPostViews")
@@ -122,28 +118,13 @@ model User {
   @@map("users")
 }
 
-model OtpVerification {
-  id        Int      @id @default(autoincrement())
-  phone     String?  @db.VarChar(15)
-  email     String   @db.VarChar(100)
-  otp       String   @db.VarChar(10)
-  expiresAt DateTime @map("expires_at")
-  used      Boolean  @default(false)
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@index([email])
-  @@index([otp])
-  @@index([expiresAt])
-  @@map("otp_verifications")
-}
-
 model UserPrivacySetting {
   userId               Int           @id @map("user_id")
   isPrivate            Boolean       @default(false) @map("is_private")
   whoCanMessage        PrivacyOption @default(everyone) @map("who_can_message")
   whoCanTagMe          PrivacyOption @default(everyone) @map("who_can_tag_me")
   whoCanFindByUsername PrivacyOption @default(everyone) @map("who_can_find_by_username")
-  showOnlineStatus      Boolean       @default(true) @map("show_online_status")
+  showOnlineStatus     Boolean       @default(true) @map("show_online_status")
   createdAt            DateTime      @default(now()) @map("created_at")
   updatedAt            DateTime      @updatedAt @map("updated_at")
 
@@ -159,45 +140,23 @@ model UserPrivacySetting {
   @@map("user_privacy_settings")
 }
 
-model PasswordReset {
-  id         Int      @id @default(autoincrement())
-  userId     Int      @map("user_id")
-  resetToken String   @map("reset_token") @db.VarChar(255)
-  expiresAt  DateTime @map("expires_at")
-  used       Boolean  @default(false)
-  createdAt  DateTime @default(now()) @map("created_at")
-
-  // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // Indexes
-  @@index([userId])
-  @@index([resetToken])
-  @@index([expiresAt])
-  @@index([used])
-  @@index([resetToken, used, expiresAt]) // Composite index cho validation
-  @@map("password_resets")
-}
-
 model Post {
   id            Int           @id @default(autoincrement())
   userId        Int           @map("user_id")
   content       String?       @db.Text
   whoCanSee     PrivacyOption @default(everyone)
   whoCanComment PrivacyOption @default(everyone)
-  createdAt     DateTime              @default(now()) @map("created_at")
-  updatedAt     DateTime              @updatedAt @map("updated_at")
-  deletedAt     DateTime?             @map("deleted_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  deletedAt     DateTime?     @map("deleted_at")
 
   // Relations
-  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   media      PostMedia[]
-  hashtags   PostHashtag[]
-  mentions   Mention[]
   comments   Comment[]
   reposts    Repost[]
   savedPosts SavedPost[]
-  views      PostView[] @relation("PostViews")
+  views      PostView[]  @relation("PostViews")
 
   // Indexes
   @@index([userId])
@@ -222,35 +181,12 @@ model PostMedia {
   @@map("post_media")
 }
 
-model Hashtag {
-  id        Int      @id @default(autoincrement())
-  name      String   @unique @db.VarChar(100)
-  createdAt DateTime @default(now()) @map("created_at")
-
-  // Relations
-  posts PostHashtag[]
-
-  @@map("hashtags")
-}
-
-model PostHashtag {
-  postId    Int @map("post_id")
-  hashtagId Int @map("hashtag_id")
-
-  // Relations
-  post    Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
-  hashtag Hashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
-
-  @@id([postId, hashtagId])
-  @@map("post_hashtags")
-}
-
 model PostView {
-  id        Int      @id @default(autoincrement())
-  postId    Int?     @map("post_id") // Nullable để support repost views
-  repostId  Int?     @map("repost_id") // Nullable để support repost views
-  userId    Int      @map("user_id")
-  viewedAt  DateTime @default(now()) @map("viewed_at")
+  id       Int      @id @default(autoincrement())
+  postId   Int?     @map("post_id") // Nullable để support repost views
+  repostId Int?     @map("repost_id") // Nullable để support repost views
+  userId   Int      @map("user_id")
+  viewedAt DateTime @default(now()) @map("viewed_at")
 
   // Relations
   post   Post?   @relation("PostViews", fields: [postId], references: [id], onDelete: Cascade)
@@ -266,40 +202,39 @@ model PostView {
   @@map("post_views")
 }
 
-model Comment {
-  id        Int       @id @default(autoincrement())
-  postId    Int?      @map("post_id") // Nullable để support repost comments
-  repostId  Int?      @map("repost_id") // Nullable để support repost comments
-  userId    Int       @map("user_id")
-  parentId  Int?      @map("parent_id") // Cho nested comments
-  content   String    @db.Text
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
+  model Comment {
+    id        Int       @id @default(autoincrement())
+    postId    Int?      @map("post_id") // Nullable để support repost comments
+    repostId  Int?      @map("repost_id") // Nullable để support repost comments
+    userId    Int       @map("user_id")
+    parentId  Int?      @map("parent_id") // Cho nested comments
+    content   String    @db.Text
+    createdAt DateTime  @default(now()) @map("created_at")
+    updatedAt DateTime  @updatedAt @map("updated_at")
+    deletedAt DateTime? @map("deleted_at")
 
-  // Relations
-  post     Post?     @relation(fields: [postId], references: [id], onDelete: Cascade)
-  repost   Repost?   @relation(fields: [repostId], references: [id], onDelete: Cascade)
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  parent   Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
-  replies  Comment[] @relation("CommentReplies")
-  mentions Mention[]
+    // Relations
+    post    Post?     @relation(fields: [postId], references: [id], onDelete: Cascade)
+    repost  Repost?   @relation(fields: [repostId], references: [id], onDelete: Cascade)
+    user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    parent  Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
+    replies Comment[] @relation("CommentReplies")
 
-  // Thêm composite index cho nested comments
-  @@index([postId, parentId]) // Query replies nhanh hơn
-  @@index([postId, createdAt]) // Phân trang comments
-  @@index([repostId, parentId]) // Query replies cho repost nhanh hơn
-  @@index([repostId, createdAt]) // Phân trang comments cho repost
-  // Indexes
-  @@index([postId])
-  @@index([repostId])
-  @@index([userId])
-  @@index([parentId])
-  @@index([createdAt])
-  @@index([deletedAt])
-  // Constraint: comment phải có postId hoặc repostId (không thể có cả hai hoặc không có cả hai)
-  @@map("comments")
-}
+    // Thêm composite index cho nested comments
+    @@index([postId, parentId]) // Query replies nhanh hơn
+    @@index([postId, createdAt]) // Phân trang comments
+    @@index([repostId, parentId]) // Query replies cho repost nhanh hơn
+    @@index([repostId, createdAt]) // Phân trang comments cho repost
+    // Indexes
+    @@index([postId])
+    @@index([repostId])
+    @@index([userId])
+    @@index([parentId])
+    @@index([createdAt])
+    @@index([deletedAt])
+    // Constraint: comment phải có postId hoặc repostId (không thể có cả hai hoặc không có cả hai)
+    @@map("comments")
+  }
 
 model Reaction {
   id           Int          @id @default(autoincrement())
@@ -319,39 +254,6 @@ model Reaction {
   @@index([reactionType])
   @@index([createdAt])
   @@map("reactions")
-}
-
-model ReactionSummary {
-  id           Int          @id @default(autoincrement())
-  targetType   TargetType   @map("target_type")
-  targetId     Int          @map("target_id")
-  reactionType ReactionType @map("reaction_type")
-  count        Int          @default(0)
-  updatedAt    DateTime     @updatedAt @map("updated_at")
-
-  @@unique([targetType, targetId, reactionType])
-  @@index([targetType, targetId])
-  @@map("reaction_summaries")
-}
-
-
-model Mention {
-  id        Int      @id @default(autoincrement())
-  userId    Int      @map("user_id") // Người được mention
-  postId    Int?     @map("post_id") // Post chứa mention (nullable)
-  commentId Int?     @map("comment_id") // Comment chứa mention (nullable)
-  createdAt DateTime @default(now()) @map("created_at")
-
-  // Relations
-  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  post    Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
-  comment Comment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
-
-  // Constraint: mention phải thuộc post hoặc comment
-  @@index([userId])
-  @@index([postId])
-  @@index([commentId])
-  @@map("mentions")
 }
 
 model Repost {
@@ -393,32 +295,29 @@ model SavedPost {
 }
 
 model Notification {
-  id          Int                    @id @default(autoincrement())
-  userId      Int                    @map("user_id")       // người nhận
-  actorId     Int                    @map("actor_id")      // người thực hiện hành động
-  type        NotificationType
-  targetType  NotificationTargetType @map("target_type")
-  targetId    Int?                   @map("target_id")
-  groupKey    String?                @map("group_key")     // gom nhóm theo thời gian hoặc người
-  metadata    Json?                  // dữ liệu phụ (ví dụ danh sách actorIds)
-  createdAt   DateTime               @default(now()) @map("created_at")
-  updatedAt   DateTime               @default(now()) @map("updated_at")
+  id         Int                    @id @default(autoincrement())
+  userId     Int                    @map("user_id") // người nhận
+  actorId    Int                    @map("actor_id") // người thực hiện hành động
+  type       NotificationType
+  targetType NotificationTargetType @map("target_type")
+  targetId   Int?                   @map("target_id")
+  groupKey   String?                @map("group_key") // gom nhóm theo thời gian hoặc người
+  metadata   Json? // dữ liệu phụ (ví dụ danh sách actorIds)
+  createdAt  DateTime               @default(now()) @map("created_at")
+  updatedAt  DateTime               @default(now()) @map("updated_at")
 
   // Relations
-  user   User @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
-  actor  User @relation("ActorNotifications", fields: [actorId], references: [id], onDelete: Cascade)
+  user  User @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  actor User @relation("ActorNotifications", fields: [actorId], references: [id], onDelete: Cascade)
 
   //constraint
   @@unique([userId, type, targetType, targetId, groupKey], map: "unique_notif_key")
-
   // Indexes
   @@index([userId])
   @@index([actorId])
   @@index([createdAt])
   @@map("notifications")
 }
-
-
 
 model Follow {
   followerId  Int      @map("follower_id") // id của người đi follow
@@ -461,7 +360,6 @@ enum MessageType {
   IMAGE
   VIDEO
   FILE
-  POST_SHARE
 }
 
 enum DeliveryStatus {
@@ -598,7 +496,6 @@ model MessageEditHistory {
   @@map("message_edit_history")
 }
 
-
 // Bảng PinnedMessage - Tin nhắn được ghim
 model PinnedMessage {
   id             Int      @id @default(autoincrement())
@@ -615,13 +512,4 @@ model PinnedMessage {
   @@index([conversationId, pinnedAt])
   @@index([pinnedById])
   @@map("pinned_messages")
-}
-
-model TypingIndicator {
-  conversationId Int
-  userId         Int
-  startedAt      DateTime
-  expiresAt      DateTime
-
-  @@unique([conversationId, userId])
 }
