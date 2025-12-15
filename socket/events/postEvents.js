@@ -82,3 +82,38 @@ postEvents.on("reaction_created", async ({ actor, targetId, targetType }) => {
   }
 });
 
+postEvents.on("reply_created", async ({ actor, commentId, postId }) => {
+  try {
+    const parentComment = await prisma.comment.findUnique({
+      where: { id: commentId },
+      select: {
+        userId: true,
+        postId: true,
+        repostId: true
+      }
+    });
+
+    if (!parentComment || parentComment.userId === actor.id) {
+      return;
+    }
+
+    // Lưu postId/repostId vào metadata để frontend có thể navigate
+    const metadata = {};
+    if (parentComment.postId) {
+      metadata.postId = parentComment.postId;
+    } else if (parentComment.repostId) {
+      metadata.repostId = parentComment.repostId;
+    }
+    await createNotification({
+      userId: parentComment.userId,
+      actorId: actor.id,
+      type: "REPLY",
+      targetType: "COMMENT",
+      targetId: commentId,
+      metadata: Object.keys(metadata).length > 0 ? metadata : null,
+    });
+  } catch (error) {
+    console.error("Error in reply_created event:", error);
+  }
+});
+

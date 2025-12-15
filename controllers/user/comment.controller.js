@@ -381,7 +381,7 @@ export const replyComment = async (req, res) => {
 
     // Gửi thông báo cho chủ comment (nếu không phải chính họ reply)
     if (parentComment.userId !== userId) {
-      postEvents.emit("reply_created", {
+      const eventData = {
         actor: {
           id: userId,
           username: newReply.user.username,
@@ -389,8 +389,11 @@ export const replyComment = async (req, res) => {
           avatarUrl: newReply.user.avatarUrl
         },
         commentId: parentCommentId,
-        postId: post.id
-      });
+        postId: post.id,
+        ...(parentComment.repostId && { repostId: parentComment.repostId })
+      };
+
+      postEvents.emit("reply_created", eventData);
     }
 
     res.status(201).json({

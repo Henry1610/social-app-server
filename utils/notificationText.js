@@ -36,6 +36,13 @@ export const formatNotificationMessage = (notification) => {
           return `${actorName} và ${count - 1} người khác đã chia sẻ bài viết của bạn.`;
         }
         
+      case 'REPLY':
+        if (count === 2) {
+          return `${actorName} và 1 người khác đã phản hồi bình luận của bạn.`;
+        } else {
+          return `${actorName} và ${count - 1} người khác đã phản hồi bình luận của bạn.`;
+        }
+        
       case 'FOLLOW_REQUEST':
         if (count === 2) {
           return `${actorName} và 1 người khác đã gửi yêu cầu theo dõi bạn.`;
@@ -60,6 +67,9 @@ export const formatNotificationMessage = (notification) => {
       
     case 'COMMENT':
       return `${actorName} đã bình luận bài viết của bạn.`;
+      
+    case 'REPLY':
+      return `${actorName} đã phản hồi bình luận của bạn.`;
       
     case 'REPOST':
       return `${actorName} đã chia sẻ bài viết của bạn.`;

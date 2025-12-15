@@ -26,6 +26,7 @@ export const createNotification = async ({
   type,
   targetType,
   targetId,
+  metadata,
 }) => {
   const now = new Date();
 
@@ -60,7 +61,8 @@ export const createNotification = async ({
     type,
     targetType,
     targetId,
-    now
+    now,
+    metadata
   });
 };
 
@@ -188,7 +190,8 @@ const createGroupedNotification = async ({
   type,
   targetType,
   targetId,
-  now
+  now,
+  metadata: additionalMetadata
 }) => {
   try {
     const groupKey = generateGroupKey(type, targetType, targetId, now);
@@ -215,7 +218,8 @@ const createGroupedNotification = async ({
           type,
           targetType,
           targetId,
-          now
+          now,
+          additionalMetadata
         });
       }
 
@@ -229,6 +233,11 @@ const createGroupedNotification = async ({
       metadata.actorIds.push(actorId);
       metadata.count = metadata.actorIds.length;
       metadata.lastActorName = await getUserById(actorId);
+      
+      // Merge additional metadata (như postId, repostId) vào metadata hiện có
+      if (additionalMetadata) {
+        Object.assign(metadata, additionalMetadata);
+      }
 
       const updated = await prisma.notification.update({
         where: { id: existing.id },
@@ -247,7 +256,8 @@ const createGroupedNotification = async ({
       type,
       targetType,
       targetId,
-      now
+      now,
+      additionalMetadata
     });
   } catch (error) {
     console.error('Error creating grouped notification:', error);
@@ -261,10 +271,22 @@ const createNewGroupedNotification = async ({
   type,
   targetType,
   targetId,
-  now
+  now,
+  additionalMetadata
 }) => {
   const groupKey = generateGroupKey(type, targetType, targetId, now);
   const lastActorName = await getUserById(actorId);
+
+  const baseMetadata = {
+    actorIds: [actorId],
+    count: 1,
+    lastActorName: lastActorName
+  };
+
+  // Merge additional metadata (như postId, repostId) vào metadata
+  const metadata = additionalMetadata 
+    ? { ...baseMetadata, ...additionalMetadata }
+    : baseMetadata;
 
   const notification = await prisma.notification.create({
     data: {
@@ -274,11 +296,7 @@ const createNewGroupedNotification = async ({
       targetType,
       targetId: targetId ?? null,
       groupKey,
-      metadata: {
-        actorIds: [actorId],
-        count: 1,
-        lastActorName: lastActorName
-      },
+      metadata,
       updatedAt: now
     },
     include: { actor: { select: ACTOR_SELECT } }
