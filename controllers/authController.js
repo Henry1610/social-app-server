@@ -41,7 +41,7 @@ export const sendOtp = async (req, res) => {
     await redisClient.set(key, otp, "EX", ttlSec);
 
     // Gửi OTP
-    if (email) await sendEmail(email, `Mã OTP của bạn là: ${otp}`);
+    if (email) await sendEmail(email, otp);
     if (phone) await sendSMS(phone, `Mã OTP của bạn là: ${otp}`);
 
     return res.json({ message: "OTP đã được gửi !" });
@@ -436,4 +436,14 @@ export const getSessionAuth = (req, res) => {
     user: authData.user
   });
 };
+
+// GET /health
+export const healthCheck = (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    uptime: process.uptime(),
+    timestamp: Date.now(),
+  });
+};
+
 
