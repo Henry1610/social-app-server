@@ -99,7 +99,7 @@ export const getMessagesWithAccess = async (userId, conversationId, options = {}
 
 
 export const createMessageWithStates = async (conversationId, senderId, messageData) => {
-  const { type = 'TEXT', content, mediaUrl, replyToId } = messageData;
+  const { type = 'TEXT', content, mediaUrl, mediaType, filename, size, replyToId } = messageData;
 
   // Tạo tin nhắn mới
   const message = await prisma.message.create({
@@ -109,6 +109,9 @@ export const createMessageWithStates = async (conversationId, senderId, messageD
       type,
       content,
       mediaUrl,
+      mediaType,
+      filename,
+      fileSize: size ? parseInt(size) : null,
       replyToId: replyToId ? parseInt(replyToId) : null,
     },
     include: {

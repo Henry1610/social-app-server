@@ -110,7 +110,8 @@ export const commentPost = async (req, res) => {
           fullName: newComment.user.fullName,
           avatarUrl: newComment.user.avatarUrl
         },
-        postId: postId
+        postId: postId,
+        postUserId: post.userId
       });
     }
 
@@ -301,7 +302,8 @@ export const commentRepost = async (req, res) => {
           fullName: newComment.user.fullName,
           avatarUrl: newComment.user.avatarUrl
         },
-        postId: repost.post.id
+        postId: repost.post.id,
+        postUserId: repost.post.userId
       });
     }
 
@@ -389,6 +391,7 @@ export const replyComment = async (req, res) => {
           avatarUrl: newReply.user.avatarUrl
         },
         commentId: parentCommentId,
+        parentCommentUserId: parentComment.userId,
         postId: post.id,
         ...(parentComment.repostId && { repostId: parentComment.repostId })
       };

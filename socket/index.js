@@ -5,17 +5,14 @@ export const registerSocketHandlers = () => {
     const io = getIO()
 
     // Register chat handlers
-    registerChatHandlers();
-
     io.on('connection', (socket) => {
         const userId = socket.handshake.auth?.userId;
+        
         if (userId) {
             socket.join(`user_${userId}`);
-            
         }
-
-        socket.on('disconnect', () => {
-            
-        })
+        
+        // Đăng ký các chat handlers cho socket này
+        registerChatHandlers(socket, userId);
     })
 }

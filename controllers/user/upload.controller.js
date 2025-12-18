@@ -20,10 +20,21 @@ export const uploadChatMedia = async (req, res) => {
     const results = []
     for (const f of files) {
       const uploaded = await uploadBufferToCloudinary(f.buffer, f.originalname, f.mimetype, folder)
+      
+      // Xác định type của file
+      let fileType = 'FILE'
+      if (f.mimetype.startsWith('image/')) {
+        fileType = 'IMAGE'
+      } else if (f.mimetype.startsWith('video/')) {
+        fileType = 'VIDEO'
+      }
+      
       results.push({
         url: uploaded.secure_url,
-        type: f.mimetype.startsWith('video/') ? 'VIDEO' : 'IMAGE',
+        type: fileType,
         mediaType: f.mimetype,
+        filename: f.originalname,
+        size: f.size,
         width: uploaded.width || null,
         height: uploaded.height || null,
         duration: uploaded.duration || null,

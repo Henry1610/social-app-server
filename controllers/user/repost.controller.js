@@ -70,7 +70,7 @@ export const repostPost = async (req, res) => {
       select: { id: true, username: true, fullName: true, avatarUrl: true }
     });
 
-    if (user) {
+    if (user && originalPost.userId !== userId) {
       postEvents.emit("repost_created", {
         actor: {
           id: user.id,
@@ -79,6 +79,7 @@ export const repostPost = async (req, res) => {
           avatarUrl: user.avatarUrl
         },
         postId: Number(postId),
+        postUserId: originalPost.userId
       });
     }
     res.json({

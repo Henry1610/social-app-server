@@ -17,7 +17,7 @@ import {
   getPinnedMessages,
 } from '../../controllers/user/message.controller.js';
 import { uploadChatMedia } from '../../controllers/user/upload.controller.js';
-import { upload } from '../../middlewares/upload.js';
+import { uploadChat } from '../../middlewares/upload.js';
 
 const router = express.Router();
 
@@ -33,10 +33,9 @@ router.delete('/conversations/:conversationId/members/:userId', removeMember);
 router.get('/conversations/:conversationId/messages', getMessages);
 router.delete('/messages/:messageId', deleteMessage);
 router.post('/uploads', (req, res, next) => {
-  upload.array('files', 10)(req, res, (err) => {
+  uploadChat.array('files', 10)(req, res, (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ success: false, message: 'File vượt quá kích thước cho phép' })
-      if (err.message === 'INVALID_FILE_TYPE') return res.status(400).json({ success: false, message: 'Định dạng không hợp lệ' })
       return res.status(400).json({ success: false, message: 'Upload thất bại' })
     }
     next()

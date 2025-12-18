@@ -17,9 +17,11 @@ COMMIT;
 -- AlterEnum MessageType: Remove POST_SHARE
 BEGIN;
 CREATE TYPE "public"."MessageType_new" AS ENUM ('TEXT', 'IMAGE', 'VIDEO', 'FILE');
+ALTER TABLE "public"."messages" ALTER COLUMN "type" DROP DEFAULT;
 ALTER TABLE "public"."messages" ALTER COLUMN "type" TYPE "public"."MessageType_new" USING ("type"::text::"public"."MessageType_new");
 ALTER TYPE "public"."MessageType" RENAME TO "MessageType_old";
 ALTER TYPE "public"."MessageType_new" RENAME TO "MessageType";
+ALTER TABLE "public"."messages" ALTER COLUMN "type" SET DEFAULT 'TEXT'::"public"."MessageType";
 DROP TYPE "public"."MessageType_old";
 COMMIT;
 

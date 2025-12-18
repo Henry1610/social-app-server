@@ -431,6 +431,9 @@ model Message {
   type           MessageType @default(TEXT)
   content        String?     @db.Text
   mediaUrl       String?     @map("media_url") @db.VarChar(500)
+  mediaType      String?     @map("media_type") @db.VarChar(100)
+  filename       String?     @map("filename") @db.VarChar(255)
+  fileSize       Int?        @map("file_size")
   replyToId      Int?        @map("reply_to_id")
   isRecalled     Boolean     @default(false) @map("is_recalled")
   recalledAt     DateTime?   @map("recalled_at")
