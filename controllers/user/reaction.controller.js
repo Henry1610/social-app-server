@@ -39,11 +39,11 @@ export const createOrUpdateReaction = async (req, res) => {
 
         const targetTypeUpper = targetType.toUpperCase();
         
-        // Post chỉ hỗ trợ LIKE
-        if (targetTypeUpper === 'POST' && reactionType !== 'LIKE') {
+        // Post và Repost chỉ hỗ trợ LIKE
+        if ((targetTypeUpper === 'POST' || targetTypeUpper === 'REPOST') && reactionType !== 'LIKE') {
             return res.status(400).json({ 
                 success: false,
-                message: "Post chỉ hỗ trợ reaction type LIKE" 
+                message: "Post và Repost chỉ hỗ trợ reaction type LIKE" 
             });
         }
 
@@ -173,6 +173,57 @@ export const getMyReaction = async (req, res) => {
         res.status(200).json({ success: true, reaction });
     } catch (error) {
         console.error("Error in getMyReaction:", error);
+        res.status(500).json({ 
+            success: false,
+            message: "Internal server error", 
+            error: error.message 
+        });
+    }
+}
+
+/**
+ * GET /api/user/reactions/stats?targetId=123&targetType=COMMENT
+ * Lấy thống kê số lượng reactions theo từng type
+ */
+export const getReactionStats = async (req, res) => {
+    const { targetId, targetType } = req.query;
+    
+    try {
+        if (!targetId || !targetType) {
+            return res.status(400).json({ 
+                success: false,
+                message: "targetId và targetType là bắt buộc" 
+            });
+        }
+
+        // Group reactions by reactionType và đếm số lượng
+        const stats = await prisma.reaction.groupBy({
+            by: ['reactionType'],
+            where: {
+                targetId: Number(targetId),
+                targetType: targetType.toUpperCase()
+            },
+            _count: {
+                id: true
+            }
+        });
+
+        // Chuyển đổi thành object dễ sử dụng: { LIKE: 5, LOVE: 3, ... }
+        const statsMap = {};
+        stats.forEach(stat => {
+            statsMap[stat.reactionType] = stat._count.id;
+        });
+
+        // Tính tổng số reactions
+        const total = stats.reduce((sum, stat) => sum + stat._count.id, 0);
+
+        res.status(200).json({ 
+            success: true, 
+            stats: statsMap,
+            total
+        });
+    } catch (error) {
+        console.error("Error in getReactionStats:", error);
         res.status(500).json({ 
             success: false,
             message: "Internal server error", 

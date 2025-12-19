@@ -4,6 +4,7 @@ import {
     createOrUpdateReaction,
     getReactions,
     getMyReaction,
+    getReactionStats,
 } from '../../controllers/user/reaction.controller.js';
 
 const router = express.Router();
@@ -15,5 +16,8 @@ router.get("/", getReactions);
 
 // Lấy reaction của user hiện tại cho 1 target
 router.get("/me", getMyReaction);
+
+// Lấy thống kê số lượng reactions theo từng type
+router.get("/stats", getReactionStats);
 
 export default router;

@@ -373,7 +373,6 @@ export const facebookCallback = (req, res, next) => {
       return res.redirect(`${process.env.CLIENT_URL}/login?error=auth_failed`);
     }
     if (!authData.user) {
-      
       return res.redirect(`${process.env.CLIENT_URL}/login?error=no_user`);
     }
     try {
@@ -389,7 +388,7 @@ export const facebookCallback = (req, res, next) => {
           fullName: user.fullName,
           role: user.role,
           avatarUrl: user.avatarUrl,
-          provider: user.provider
+          provider: user.provider,
         }
       };
 

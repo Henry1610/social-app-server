@@ -19,8 +19,6 @@ passport.use(new FacebookStrategy(
     try {
       const facebookId = profile.id;
       const email = profile.emails?.[0]?.value;
-    
-
       let user = await prisma.user.findFirst({
         where: { facebookId },
       });
@@ -31,7 +29,7 @@ passport.use(new FacebookStrategy(
         if (user) {
           user = await prisma.user.update({
             where: { email },
-            data: { facebookId,provider: "facebook", },
+            data: { facebookId, provider: "facebook", },
           });
         }
       }
@@ -47,8 +45,8 @@ passport.use(new FacebookStrategy(
               email,
               facebookId,
               provider: "facebook",
-              username: profile.displayName.replace(/\s+/g, '').toLowerCase(),
-              avatarUrl: profile.photos?.[0]?.value || null,
+              username: profile.displayName,
+              avatarUrl: profile.photos?.[0]?.value || '/images/avatar-IG-mac-dinh-1.jpg',
               role: "user"
             },
           });
@@ -77,7 +75,6 @@ passport.use(new FacebookStrategy(
         refreshToken: await createRefreshToken(user),
       };
 
-      // console.log("✅ Profile Facebook:", profile);
       return done(null, { user, tokens });
 
     } catch (err) {
