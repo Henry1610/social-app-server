@@ -45,6 +45,7 @@ enum TargetType {
   POST
   COMMENT
   REPOST
+  MESSAGE
 }
 
 enum NotificationType {
