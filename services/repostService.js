@@ -1,14 +1,9 @@
-import prisma from "../utils/prisma.js";
+import * as repostRepository from "../repositories/repostRepository.js";
 import { getReactionCounts } from "../utils/postStatsHelper.js";
 import { isFollowing } from "./followService.js";
-
-// Helper: User select fields (dùng chung cho nhiều queries)
-const userSelectFields = {
-  id: true,
-  username: true,
-  fullName: true,
-  avatarUrl: true
-};
+import { createNotification } from "./notificationService.js";
+import { getUserById } from "./userService.js";
+import prisma from "../utils/prisma.js";
 
 /**
  * Custom error class cho repost service
@@ -22,6 +17,129 @@ class RepostServiceError extends Error {
 }
 
 /**
+ * Tạo repost mới hoặc phục hồi repost đã xóa
+ * @param {number} userId - ID của user
+ * @param {number} postId - ID của post
+ * @param {string} content - Nội dung repost
+ * @returns {Promise<Object>} Result object với success flag và repost data
+ */
+export const createRepostService = async (userId, postId, content = '') => {
+  // Kiểm tra post tồn tại
+  const originalPost = await prisma.post.findUnique({
+    where: { id: Number(postId) },
+  });
+  
+  if (!originalPost) {
+    return {
+      success: false,
+      message: 'Bài viết gốc không tồn tại!'
+    };
+  }
+
+  // Upsert repost
+  const repost = await repostRepository.upsertRepost(userId, Number(postId), content);
+
+  // Gửi thông báo cho chủ post (nếu không phải chính họ repost)
+  if (originalPost.userId !== userId) {
+    try {
+      await createNotification({
+        userId: originalPost.userId,
+        actorId: userId,
+        type: "REPOST",
+        targetType: "POST",
+        targetId: Number(postId),
+      });
+    } catch (error) {
+      console.error("Error creating notification in createRepostService:", error);
+    }
+  }
+
+  return {
+    success: true,
+    message: 'Repost thành công!',
+    repost
+  };
+};
+
+/**
+ * Hủy repost (xóa mềm)
+ * @param {number} userId - ID của user
+ * @param {number} postId - ID của post
+ * @returns {Promise<Object>} Result object với success flag và repostCount
+ */
+export const undoRepostService = async (userId, postId) => {
+  const result = await prisma.$transaction(async (tx) => {
+    // Tìm repost chưa xóa
+    const repost = await tx.repost.findFirst({
+      where: { userId, postId: Number(postId), deletedAt: null },
+    });
+
+    if (!repost) return null;
+
+    // Xóa mềm
+    await tx.repost.update({
+      where: { id: repost.id },
+      data: { deletedAt: new Date() },
+    });
+
+    // Đếm repost còn lại
+    const repostCount = await tx.repost.count({
+      where: { postId: Number(postId), deletedAt: null },
+    });
+
+    return repostCount;
+  });
+
+  if (result === null) {
+    return {
+      success: false,
+      message: "Bạn chưa repost bài viết này!",
+    };
+  }
+
+  return {
+    success: true,
+    message: 'Hủy repost thành công!',
+    repostCount: result,
+  };
+};
+
+/**
+ * Đánh dấu repost đã xem
+ * @param {number} repostId - ID của repost
+ * @param {number} userId - ID của user
+ * @returns {Promise<Object>} Result object với success flag
+ */
+export const markRepostAsViewedService = async (repostId, userId) => {
+  // Validate repostId
+  const parsedRepostId = parseInt(repostId);
+  if (!repostId || isNaN(parsedRepostId)) {
+    return {
+      success: false,
+      message: 'ID repost không hợp lệ'
+    };
+  }
+
+  // Kiểm tra repost có tồn tại không
+  const repost = await repostRepository.findRepostById(parsedRepostId);
+
+  if (!repost || repost.deletedAt) {
+    return {
+      success: false,
+      message: 'Repost không tồn tại'
+    };
+  }
+
+  // Upsert repost view
+  await repostRepository.upsertRepostView(parsedRepostId, userId);
+
+  return {
+    success: true,
+    message: 'Đã đánh dấu repost đã xem'
+  };
+};
+
+/**
  * Lấy danh sách reposts của một user
  * @param {number} targetUserId - ID của user cần lấy reposts
  * @param {number} currentUserId - ID của user đang xem (luôn có vì route yêu cầu authenticate)
@@ -31,13 +149,14 @@ class RepostServiceError extends Error {
 export const getUserReposts = async (targetUserId, currentUserId) => {
   try {
     // Kiểm tra privacy settings của tài khoản repost
-    const targetUser = await prisma.user.findUnique({
-      where: { id: targetUserId },
-      select: { id: true, privacySettings: { select: { isPrivate: true } } }
-    });
-
-    if (!targetUser) {
-      throw new RepostServiceError('Người dùng không tồn tại!', 404);
+    let targetUser;
+    try {
+      targetUser = await getUserById(targetUserId, 'Người dùng không tồn tại!');
+    } catch (error) {
+      if (error.statusCode === 404) {
+        throw new RepostServiceError('Người dùng không tồn tại!', 404);
+      }
+      throw error;
     }
 
     const isSelf = targetUserId === currentUserId;
@@ -60,32 +179,9 @@ export const getUserReposts = async (targetUserId, currentUserId) => {
     }
 
     // Lấy tất cả reposts (kể cả khi post gốc bị xóa hoặc bị ẩn)
-    const reposts = await prisma.repost.findMany({
-      where: { 
-        userId: targetUserId,
-        deletedAt: null,
-        // Không filter post gốc để vẫn hiển thị repost khi post gốc bị xóa hoặc bị ẩn
-      },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        user: { // người repost (chính là targetUserId)
-          select: userSelectFields
-        },
-        post: { // bài viết gốc (có thể null nếu bị xóa)
-          include: {
-            user: { // người đăng bài gốc
-              select: userSelectFields
-            },
-            media: true,
-            _count: { select: { comments: true, reposts: true, savedPosts: true } }
-          }
-        },
-        _count: {
-          select: {
-            comments: true // Comments của repost
-          }
-        }
-      }
+    const reposts = await repostRepository.getRepostsByUserId(targetUserId, {
+      includePost: true,
+      includeUser: true
     });
 
     // Nếu không có repost nào, trả về mảng rỗng
@@ -272,4 +368,3 @@ export const getUserReposts = async (targetUserId, currentUserId) => {
     throw new RepostServiceError('Lỗi server!', 500);
   }
 };
-

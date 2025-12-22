@@ -1,5 +1,5 @@
 import prisma from "../../utils/prisma.js";
-import { postEvents } from "../../socket/events/postEvents.js";
+import { createNotification } from "../../services/notificationService.js";
 
 // Helper: User select fields (dùng chung cho nhiều queries)
 const userSelectFields = {
@@ -76,17 +76,36 @@ export const createOrUpdateReaction = async (req, res) => {
                 }
             });
 
-            // Emit event để tạo thông báo
-            postEvents.emit("reaction_created", {
-                actor: {
-                    id: reaction.user.id,
-                    username: reaction.user.username,
-                    fullName: reaction.user.fullName,
-                    avatarUrl: reaction.user.avatarUrl
-                },
-                targetId: Number(targetId),
-                targetType: targetTypeUpper
-            });
+            // Tạo notification cho chủ sở hữu của target (nếu không phải chính họ react)
+            try {
+                let targetUserId = null;
+
+                if (targetTypeUpper === "POST") {
+                    const post = await prisma.post.findUnique({
+                        where: { id: Number(targetId) },
+                        select: { userId: true }
+                    });
+                    targetUserId = post?.userId;
+                } else if (targetTypeUpper === "COMMENT") {
+                    const comment = await prisma.comment.findUnique({
+                        where: { id: Number(targetId) },
+                        select: { userId: true }
+                    });
+                    targetUserId = comment?.userId;
+                }
+
+                if (targetUserId && targetUserId !== Number(userId)) {
+                    await createNotification({
+                        userId: targetUserId,
+                        actorId: Number(userId),
+                        type: "REACTION",
+                        targetType: targetTypeUpper,
+                        targetId: Number(targetId),
+                    });
+                }
+            } catch (error) {
+                console.error("Error creating notification in createOrUpdateReaction:", error);
+            }
         } else if (existingReaction.reactionType === reactionType) {
             // Đã có cùng loại → toggle (xóa)
             await prisma.reaction.delete({ where: whereClause });

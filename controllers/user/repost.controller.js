@@ -1,6 +1,9 @@
-import prisma from "../../utils/prisma.js";
-import { getUserReposts as getUserRepostsService } from "../../services/repostService.js";
-import { postEvents } from "../../socket/events/postEvents.js";
+import { 
+  getUserReposts as getUserRepostsService,
+  createRepostService,
+  undoRepostService,
+  markRepostAsViewedService
+} from "../../services/repostService.js";
 /**
  * GET /api/user/:username/reposts
  * Lấy danh sách reposts của một user
@@ -34,59 +37,13 @@ export const repostPost = async (req, res) => {
     const { content = '' } = req.body;
     const userId = req.user.id;
 
-    // Check if original post exists
-    const originalPost = await prisma.post.findUnique({
-      where: { id: Number(postId) },
-    });
+    const result = await createRepostService(userId, postId, content);
 
-    if (!originalPost) {
-      return res.status(404).json({
-        success: false,
-        message: 'Bài viết gốc không tồn tại!'
-      });
+    if (!result.success) {
+      return res.status(404).json(result);
     }
 
-    // Upsert repost (tạo mới hoặc phục hồi nếu đã xóa mềm)
-    const repost = await prisma.repost.upsert({
-      where: {
-        userId_postId: {  // tên composite key tự sinh từ @@id([userId, postId])
-          userId,
-          postId: Number(postId)
-        }
-      },
-      update: { deletedAt: null, content, createdAt: new Date() }, // phục hồi nếu trước đó đã xóa mềm
-      create: {
-        userId,
-        postId: Number(postId),
-        content,
-        createdAt: new Date(),
-      },
-    });
-
-    // Lấy thông tin user để emit event (vì repost.upsert không include user relation)
-    // Notification sẽ được tạo tự động bởi postEvents handler
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, username: true, fullName: true, avatarUrl: true }
-    });
-
-    if (user && originalPost.userId !== userId) {
-      postEvents.emit("repost_created", {
-        actor: {
-          id: user.id,
-          username: user.username,
-          fullName: user.fullName,
-          avatarUrl: user.avatarUrl
-        },
-        postId: Number(postId),
-        postUserId: originalPost.userId
-      });
-    }
-    res.json({
-      success: true,
-      message: 'Repost thành công!',
-      repost
-    });
+    res.json(result);
   } catch (error) {
     console.error('Error reposting:', error);
     res.status(500).json({
@@ -102,38 +59,13 @@ export const undoRepost = async (req, res) => {
     const { postId } = req.params;
     const userId = req.user.id;
 
-    const result = await prisma.$transaction(async (prisma) => {
-      // Tìm repost chưa xóa
-      const repost = await prisma.repost.findFirst({
-        where: { userId, postId: Number(postId), deletedAt: null },
-      });
+    const result = await undoRepostService(userId, postId);
 
-      if (!repost) return null;
-
-      // Xóa mềm
-      await prisma.repost.update({
-        where: { id: repost.id },
-        data: { deletedAt: new Date() },
-      });
-
-      // Đếm repost còn lại
-      const repostCount = await prisma.repost.count({
-        where: { postId: Number(postId), deletedAt: null },
-      });
-
-      return repostCount;
-    });
-    if (result === null) {
-      return res.status(404).json({
-        success: false,
-        message: "Bạn chưa repost bài viết này!",
-      });
+    if (!result.success) {
+      return res.status(404).json(result);
     }
-    res.json({
-      success: true,
-      message: 'Hủy repost thành công!',
-      repostCount: result,
-    });
+
+    res.json(result);
   } catch (error) {
     console.error('Error undoing repost:', error);
     res.status(500).json({
@@ -149,50 +81,14 @@ export const markRepostAsViewed = async (req, res) => {
     const { repostId } = req.params;
     const userId = req.user.id;
 
-    // Validate repostId
-    const parsedRepostId = parseInt(repostId);
-    if (!repostId || isNaN(parsedRepostId)) {
-      return res.status(400).json({
-        success: false,
-        message: 'ID repost không hợp lệ'
-      });
+    const result = await markRepostAsViewedService(repostId, userId);
+
+    if (!result.success) {
+      const statusCode = result.message.includes('không hợp lệ') ? 400 : 404;
+      return res.status(statusCode).json(result);
     }
 
-    // Kiểm tra repost có tồn tại không
-    const repost = await prisma.repost.findUnique({
-      where: { id: parsedRepostId },
-      select: { id: true, deletedAt: true }
-    });
-
-    if (!repost || repost.deletedAt) {
-      return res.status(404).json({
-        success: false,
-        message: 'Repost không tồn tại'
-      });
-    }
-
-    // Upsert repost view (nếu đã xem rồi thì chỉ update viewedAt)
-    await prisma.postView.upsert({
-      where: {
-        repostId_userId: {
-          repostId: parsedRepostId,
-          userId: userId
-        }
-      },
-      update: {
-        viewedAt: new Date()
-      },
-      create: {
-        repostId: parsedRepostId,
-        userId: userId,
-        viewedAt: new Date()
-      }
-    });
-
-    res.json({
-      success: true,
-      message: 'Đã đánh dấu repost đã xem'
-    });
+    res.json(result);
   } catch (error) {
     console.error('Error marking repost as viewed:', error);
     res.status(500).json({
