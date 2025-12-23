@@ -1,16 +1,14 @@
-import prisma from '../utils/prisma.js';
+import * as messageRepository from '../repositories/messageRepository.js';
 
 export const createSystemMessage = async (conversationId, type, data) => {
     try {
-        const message = await prisma.message.create({
-            data: {
-                conversationId: parseInt(conversationId),
-                senderId: null,
-                type: 'TEXT',
-                content: generateSystemMessageContent(type, data),
-                isSystem: true,
-                createdAt: new Date()
-            }
+        const message = await messageRepository.createMessage({
+            conversationId: parseInt(conversationId),
+            senderId: null,
+            type: 'TEXT',
+            content: generateSystemMessageContent(type, data),
+            isSystem: true,
+            createdAt: new Date()
         });
         
         return message;

@@ -1,81 +1,118 @@
-import prisma from "../utils/prisma.js";
+import { getUserById } from "./userService.js";
+import * as userRepository from "../repositories/userRepository.js";
+import * as conversationRepository from "../repositories/conversationRepository.js";
+
+/**
+ * Tìm user theo username
+ * @param {string} username - Username của user
+ * @returns {Promise<Object|null>} User object với id hoặc null
+ */
+export const findUserByUsername = async (username) => {
+  return await userRepository.findUserByUsername(username, { id: true });
+};
+
+/**
+ * Tìm user theo id với các fields cụ thể
+ * @param {number} userId - ID của user
+ * @param {Object} select - Fields cần select
+ * @returns {Promise<Object|null>} User object hoặc null
+ */
+export const findUserByIdWithSelect = async (userId, select = {
+  id: true,
+  username: true,
+  fullName: true
+}) => {
+  return await userRepository.findUserByIdWithSelect(userId, select);
+};
+
+/**
+ * Kiểm tra conversation member đã tồn tại chưa
+ * @param {number} conversationId - ID của conversation
+ * @param {number} userId - ID của user
+ * @returns {Promise<Object|null>} ConversationMember object hoặc null
+ */
+export const findConversationMember = async (conversationId, userId) => {
+  return await conversationRepository.findConversationMember(conversationId, userId);
+};
+
+/**
+ * Kiểm tra và validate để tạo DIRECT conversation
+ * @param {string} participantUsername - Username của participant
+ * @param {Array<number>} participantIds - Array của participant IDs
+ * @returns {Promise<{participantId: number}|null>} Object với participantId hoặc null nếu không hợp lệ
+ */
+export const validateDirectConversationParticipant = async (participantUsername, participantIds) => {
+  let participantId;
+
+  if (participantUsername) {
+    const participant = await findUserByUsername(participantUsername);
+    if (!participant) {
+      return {
+        success: false,
+        message: 'Không tìm thấy người dùng với username này',
+        statusCode: 404
+      };
+    }
+    participantId = participant.id;
+  } else if (participantIds && participantIds.length === 1) {
+    participantId = participantIds[0];
+  } else {
+    return {
+      success: false,
+      message: 'Cần cung cấp participantUsername hoặc participantIds cho chat 1-1',
+      statusCode: 400
+    };
+  }
+
+  return {
+    success: true,
+    participantId
+  };
+};
+
+/**
+ * Validate để tạo GROUP conversation
+ * @param {Array<number>} participantIds - Array của participant IDs
+ * @returns {Promise<{success: boolean, message?: string, statusCode?: number}>}
+ */
+export const validateGroupConversationParticipants = (participantIds) => {
+  if (!participantIds || participantIds.length < 2) {
+    return {
+      success: false,
+      message: 'Đối với nhóm chat, cần ít nhất 2 người tham gia',
+      statusCode: 400
+    };
+  }
+  return { success: true };
+};
+
+/**
+ * Kiểm tra user có tồn tại không
+ * @param {number} userId - ID của user
+ * @returns {Promise<Object|null>} User object hoặc null
+ */
+export const checkUserExists = async (userId) => {
+  return await userRepository.findUserById(userId);
+};
 
 export const checkConversationAccess = async (userId, conversationId) => {
-  return await prisma.conversationMember.findFirst({
-    where: {
-      conversationId: parseInt(conversationId),
-      userId,
-      leftAt: null,
-    },
-  });
+  return await conversationRepository.findConversationMemberByAccess(conversationId, userId);
 };
 
 export const checkAdminPermission = async (userId, conversationId) => {
-  return await prisma.conversationMember.findFirst({
-    where: {
-      conversationId: parseInt(conversationId),
-      userId,
-      role: 'ADMIN',
-      leftAt: null,
-    },
-  });
+  return await conversationRepository.findConversationMemberByAdmin(conversationId, userId);
 };
 
 export const getConversationWithAccess = async (userId, conversationId, include = {}) => {
-  return await prisma.conversation.findFirst({
-    where: {
-      id: parseInt(conversationId),
-      members: {
-        some: {
-          userId,
-          leftAt: null,
-        },
-      },
-    },
-    include,
-  });
+  return await conversationRepository.findConversationWithAccess(userId, conversationId, include);
 };
 
 export const findOrCreateDirectConversation = async (userId, participantId) => {
   // Kiểm tra conversation đã tồn tại chưa
-  const existingConversation = await prisma.conversation.findFirst({
-    where: {
-      type: "DIRECT",
-
-      AND: [
-        // 1. conversation phải có user hiện tại
-        {
-          members: {
-            some: {
-              userId: userId,
-              leftAt: null,
-            }
-          },
-        },
-
-        // 2. conversation phải có participant
-        {
-          members: {
-            some: {
-              userId: participantId,
-              leftAt: null,
-            },
-          },
-        },
-
-        // 3. mọi member đều phải thuộc 2 người này & chưa rời
-        {
-          members: {
-            every: {
-              userId: { in: [userId, participantId] },
-              leftAt: null,
-            },
-          },
-        }
-      ],
-    },
-
-    include: {
+  const existingConversation = await conversationRepository.findDirectConversationByMembers(
+    userId,
+    participantId,
+    {
       members: {
         include: {
           user: {
@@ -88,32 +125,30 @@ export const findOrCreateDirectConversation = async (userId, participantId) => {
           },
         },
       },
-    },
-  });
+    }
+  );
 
   if (existingConversation) {
     return existingConversation;
   }
 
   // Tạo conversation mới
-  return await prisma.conversation.create({
-    data: {
+  return await conversationRepository.createConversation(
+    {
       type: 'DIRECT',
       createdBy: userId,
-      members: {
-        create: [
-          {
-            userId,
-            role: 'MEMBER',
-          },
-          {
-            userId: participantId,
-            role: 'MEMBER',
-          },
-        ],
-      },
+      members: [
+        {
+          userId,
+          role: 'MEMBER',
+        },
+        {
+          userId: participantId,
+          role: 'MEMBER',
+        },
+      ],
     },
-    include: {
+    {
       members: {
         include: {
           user: {
@@ -126,8 +161,8 @@ export const findOrCreateDirectConversation = async (userId, participantId) => {
           },
         },
       },
-    },
-  });
+    }
+  );
 };
 
 /**
@@ -139,18 +174,9 @@ export const findOrCreateDirectConversation = async (userId, participantId) => {
  * @returns {Promise<{conversations: Array, totalCount: number}>}
  */
 export const fetchConversations = async (userId, { page = 1, limit = 20 } = {}) => {
-  const conversations = await prisma.conversation.findMany({
-    where: {
-      members: {
-        some: {
-          userId: userId,
-          leftAt: null,
-        },
-      },
-      messages: {
-        some: {},
-      },
-    },
+  const conversations = await conversationRepository.findConversationsByUserId(userId, {
+    page,
+    limit,
     include: {
       members: {
         where: {
@@ -210,26 +236,9 @@ export const fetchConversations = async (userId, { page = 1, limit = 20 } = {}) 
         },
       },
     },
-    orderBy: {
-      lastMessageAt: 'desc',
-    },
-    take: parseInt(limit),
-    skip: (parseInt(page) - 1) * parseInt(limit),
   });
 
-  const totalCount = await prisma.conversation.count({
-    where: {
-      members: {
-        some: {
-          userId: userId,
-          leftAt: null,
-        },
-      },
-      messages: {
-        some: {},
-      },
-    },
-  });
+  const totalCount = await conversationRepository.countConversationsByUserId(userId);
 
   return {
     conversations,
@@ -247,26 +256,24 @@ export const fetchConversations = async (userId, { page = 1, limit = 20 } = {}) 
  * @returns {Promise<Object>} Conversation object đã được tạo
  */
 export const createGroupConversation = async ({ createdBy, name, avatarUrl, participantIds }) => {
-  return await prisma.conversation.create({
-    data: {
+  return await conversationRepository.createConversation(
+    {
       type: 'GROUP',
       name,
       avatarUrl,
       createdBy,
-      members: {
-        create: [
-          {
-            userId: createdBy,
-            role: 'ADMIN',
-          },
-          ...participantIds.map((participantId) => ({
-            userId: participantId,
-            role: 'MEMBER',
-          })),
-        ],
-      },
+      members: [
+        {
+          userId: createdBy,
+          role: 'ADMIN',
+        },
+        ...participantIds.map((participantId) => ({
+          userId: participantId,
+          role: 'MEMBER',
+        })),
+      ],
     },
-    include: {
+    {
       members: {
         include: {
           user: {
@@ -281,8 +288,8 @@ export const createGroupConversation = async ({ createdBy, name, avatarUrl, part
           },
         },
       },
-    },
-  });
+    }
+  );
 };
 
 /**
@@ -291,23 +298,17 @@ export const createGroupConversation = async ({ createdBy, name, avatarUrl, part
  * @returns {Promise<Array>} Danh sách members
  */
 export const getConversationMembersList = async (conversationId) => {
-  return await prisma.conversationMember.findMany({
-    where: {
-      conversationId: parseInt(conversationId),
-      leftAt: null,
-    },
-    include: {
-      user: {
-        select: {
-          id: true,
-          username: true,
-          fullName: true,
-          avatarUrl: true,
-          privacySettings: {
-            select: {
-              whoCanMessage: true,
-              showOnlineStatus: true,
-            },
+  return await conversationRepository.findConversationMembersByConversationId(conversationId, {
+    user: {
+      select: {
+        id: true,
+        username: true,
+        fullName: true,
+        avatarUrl: true,
+        privacySettings: {
+          select: {
+            whoCanMessage: true,
+            showOnlineStatus: true,
           },
         },
       },
@@ -324,13 +325,13 @@ export const getConversationMembersList = async (conversationId) => {
  * @returns {Promise<Object>} Member record đã được tạo
  */
 export const addConversationMember = async ({ conversationId, userId, role = 'MEMBER' }) => {
-  return await prisma.conversationMember.create({
-    data: {
-      conversationId: parseInt(conversationId),
+  return await conversationRepository.createConversationMember(
+    {
+      conversationId,
       userId,
       role,
     },
-    include: {
+    {
       user: {
         select: {
           id: true,
@@ -339,8 +340,8 @@ export const addConversationMember = async ({ conversationId, userId, role = 'ME
           avatarUrl: true,
         },
       },
-    },
-  });
+    }
+  );
 };
 
 /**
@@ -351,15 +352,162 @@ export const addConversationMember = async ({ conversationId, userId, role = 'ME
  * @returns {Promise<void>}
  */
 export const removeConversationMember = async ({ conversationId, userId }) => {
-  await prisma.conversationMember.update({
-    where: {
-      conversationId_userId: {
-        conversationId: parseInt(conversationId),
-        userId: parseInt(userId),
-      },
-    },
-    data: {
-      leftAt: new Date(),
-    },
+  await conversationRepository.updateConversationMember(conversationId, userId, {
+    leftAt: new Date(),
   });
+};
+
+/**
+ * Tạo DIRECT conversation với validation
+ * @param {number} userId - ID của user hiện tại
+ * @param {string} participantUsername - Username của participant (optional)
+ * @param {Array<number>} participantIds - Array của participant IDs (optional)
+ * @returns {Promise<{success: boolean, conversation?: Object, message?: string, exists?: boolean, statusCode?: number}>}
+ */
+export const createDirectConversationService = async (userId, participantUsername, participantIds) => {
+  // Validate participant
+  const validation = await validateDirectConversationParticipant(participantUsername, participantIds);
+  if (!validation.success) {
+    return validation;
+  }
+
+  const { participantId } = validation;
+
+  // Tìm hoặc tạo conversation
+  const conversation = await findOrCreateDirectConversation(userId, participantId);
+  
+  if (conversation && conversation.id) {
+    return {
+      success: true,
+      conversation,
+      exists: true,
+      message: 'Conversation đã tồn tại'
+    };
+  }
+
+  return {
+    success: true,
+    conversation,
+    exists: false
+  };
+};
+
+/**
+ * Tạo GROUP conversation với validation
+ * @param {number} userId - ID của user tạo nhóm
+ * @param {Object} data - Dữ liệu để tạo nhóm
+ * @param {string} data.name - Tên nhóm
+ * @param {string} data.avatarUrl - Avatar nhóm
+ * @param {Array<number>} data.participantIds - Danh sách participant IDs
+ * @returns {Promise<{success: boolean, conversation?: Object, message?: string, statusCode?: number}>}
+ */
+export const createGroupConversationService = async (userId, { name, avatarUrl, participantIds }) => {
+  // Validate participants
+  const validation = validateGroupConversationParticipants(participantIds);
+  if (!validation.success) {
+    return validation;
+  }
+
+  // Tạo conversation
+  const conversation = await createGroupConversation({
+    createdBy: userId,
+    name,
+    avatarUrl,
+    participantIds
+  });
+
+  return {
+    success: true,
+    conversation
+  };
+};
+
+/**
+ * Thêm member vào conversation với validation
+ * @param {number} conversationId - ID của conversation
+ * @param {number} newMemberId - ID của user cần thêm
+ * @param {number} currentUserId - ID của user hiện tại (để check permission)
+ * @returns {Promise<{success: boolean, member?: Object, message?: string, statusCode?: number}>}
+ */
+export const addMemberToConversationService = async (conversationId, newMemberId, currentUserId) => {
+  // Kiểm tra quyền admin
+  const currentUserMember = await checkAdminPermission(currentUserId, conversationId);
+  if (!currentUserMember) {
+    return {
+      success: false,
+      message: 'Bạn không có quyền thêm thành viên vào nhóm này',
+      statusCode: 403
+    };
+  }
+
+  // Kiểm tra user mới có tồn tại không
+  const newMember = await checkUserExists(newMemberId);
+  if (!newMember) {
+    return {
+      success: false,
+      message: 'Không tìm thấy người dùng',
+      statusCode: 404
+    };
+  }
+
+  // Kiểm tra user mới đã là member chưa
+  const existingMember = await findConversationMember(conversationId, newMemberId);
+  if (existingMember) {
+    return {
+      success: false,
+      message: 'Người dùng đã là thành viên của nhóm',
+      statusCode: 400
+    };
+  }
+
+  // Thêm member mới
+  const newMemberRecord = await addConversationMember({
+    conversationId,
+    userId: newMemberId,
+    role: 'MEMBER'
+  });
+
+  return {
+    success: true,
+    member: newMemberRecord
+  };
+};
+
+/**
+ * Xóa member khỏi conversation với validation
+ * @param {number} conversationId - ID của conversation
+ * @param {number} memberIdToRemove - ID của member cần xóa
+ * @param {number} currentUserId - ID của user hiện tại
+ * @returns {Promise<{success: boolean, message?: string, statusCode?: number}>}
+ */
+export const removeMemberFromConversationService = async (conversationId, memberIdToRemove, currentUserId) => {
+  // Kiểm tra quyền truy cập conversation
+  const currentUserMember = await checkConversationAccess(currentUserId, conversationId);
+  if (!currentUserMember) {
+    return {
+      success: false,
+      message: 'Bạn không phải là thành viên của nhóm này',
+      statusCode: 403
+    };
+  }
+
+  // Chỉ admin mới được xóa member khác
+  if (memberIdToRemove != currentUserId && currentUserMember.role !== 'ADMIN') {
+    return {
+      success: false,
+      message: 'Bạn không có quyền xóa thành viên này',
+      statusCode: 403
+    };
+  }
+
+  // Xóa member (soft delete)
+  await removeConversationMember({
+    conversationId,
+    userId: memberIdToRemove
+  });
+
+  return {
+    success: true,
+    message: 'Đã xóa thành viên khỏi nhóm'
+  };
 };

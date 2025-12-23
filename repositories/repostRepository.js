@@ -70,11 +70,22 @@ export const countRepostsByPostId = async (postId) => {
 /**
  * Tìm repost theo ID
  * @param {number} repostId - ID của repost
+ * @param {Object} select - Select fields
+ * @param {Object} include - Include relations
  * @returns {Promise<Object|null>} Repost record hoặc null
  */
-export const findRepostById = async (repostId) => {
+export const findRepostById = async (repostId, select = {}, include = {}) => {
+  const hasSelect = Object.keys(select).length > 0;
+  const hasInclude = Object.keys(include).length > 0;
+  
+  if (hasSelect && hasInclude) {
+    throw new Error('Cannot use both select and include in the same query');
+  }
+  
   return await prisma.repost.findUnique({
     where: { id: repostId },
+    ...(hasSelect ? { select } : {}),
+    ...(hasInclude ? { include } : {})
   });
 };
 

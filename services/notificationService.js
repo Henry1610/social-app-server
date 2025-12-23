@@ -1,7 +1,7 @@
-import prisma from "../utils/prisma.js";
 import { getUserById } from "./userService.js";
 import { formatNotificationMessage } from "../utils/notificationText.js";
 import { getIO } from "../config/socket.js";
+import * as notificationRepository from "../repositories/notificationRepository.js";
 
 const TIME_WINDOW = 5 * 60 * 1000;
 
@@ -120,49 +120,46 @@ const createIndividualNotification = async ({
   now
 }) => {
   try {
-    const existing = await prisma.notification.findFirst({
-      where: {
-        userId,
-        type,
-        targetType,
-        targetId: targetId ?? null,
-        groupKey: null
-      }
-    });
+    const existing = await notificationRepository.findNotificationByGroupKey(
+      userId,
+      type,
+      targetType,
+      targetId,
+      null,
+      { actor: { select: ACTOR_SELECT } }
+    );
 
     let notification;
 
     if (existing) {
-      notification = await prisma.notification.update({
-        where: { id: existing.id },
-        data: { actorId, updatedAt: now },
-        include: { actor: { select: ACTOR_SELECT } }
-      });
+      notification = await notificationRepository.updateNotification(
+        existing.id,
+        { actorId, updatedAt: now },
+        { actor: { select: ACTOR_SELECT } }
+      );
     } else {
       try {
-        notification = await prisma.notification.create({
-    data: {
-      user: { connect: { id: userId } },
-      actor: { connect: { id: actorId } },
-      type,
-      targetType,
-      targetId,
+        notification = await notificationRepository.createNotification(
+          {
+            userId,
+            actorId,
+            type,
+            targetType,
+            targetId,
             groupKey: null
           },
-          include: { actor: { select: ACTOR_SELECT } }
-        });
+          { actor: { select: ACTOR_SELECT } }
+        );
       } catch (createError) {
         if (createError.code === 'P2002') {
-          const existingAfterRetry = await prisma.notification.findFirst({
-            where: {
-              userId,
-              type,
-              targetType,
-              targetId: targetId ?? null,
-              groupKey: null
-            },
-            include: { actor: { select: ACTOR_SELECT } }
-          });
+          const existingAfterRetry = await notificationRepository.findNotificationByGroupKey(
+            userId,
+            type,
+            targetType,
+            targetId,
+            null,
+            { actor: { select: ACTOR_SELECT } }
+          );
 
           if (existingAfterRetry) {
             notification = existingAfterRetry;
@@ -196,16 +193,14 @@ const createGroupedNotification = async ({
   try {
     const groupKey = generateGroupKey(type, targetType, targetId, now);
 
-    const existing = await prisma.notification.findFirst({
-      where: {
-        userId,
-        type,
-        targetType,
-        targetId: targetId ?? null,
-        groupKey
-      },
-      include: { actor: { select: ACTOR_SELECT } }
-    });
+    const existing = await notificationRepository.findNotificationByGroupKey(
+      userId,
+      type,
+      targetType,
+      targetId,
+      groupKey,
+      { actor: { select: ACTOR_SELECT } }
+    );
 
   if (existing) {
       const timeSinceUpdate = now.getTime() - existing.updatedAt.getTime();
@@ -239,11 +234,11 @@ const createGroupedNotification = async ({
         Object.assign(metadata, additionalMetadata);
       }
 
-      const updated = await prisma.notification.update({
-        where: { id: existing.id },
-        data: { metadata, updatedAt: now },
-        include: { actor: { select: ACTOR_SELECT } }
-      });
+      const updated = await notificationRepository.updateNotification(
+        existing.id,
+        { metadata, updatedAt: now },
+        { actor: { select: ACTOR_SELECT } }
+      );
 
       emitNotification(userId, updated);
 
@@ -288,19 +283,19 @@ const createNewGroupedNotification = async ({
     ? { ...baseMetadata, ...additionalMetadata }
     : baseMetadata;
 
-  const notification = await prisma.notification.create({
-    data: {
-      user: { connect: { id: userId } },
-      actor: { connect: { id: actorId } },
+  const notification = await notificationRepository.createNotification(
+    {
+      userId,
+      actorId,
       type,
       targetType,
-      targetId: targetId ?? null,
+      targetId,
       groupKey,
       metadata,
       updatedAt: now
     },
-    include: { actor: { select: ACTOR_SELECT } }
-  });
+    { actor: { select: ACTOR_SELECT } }
+  );
 
   emitNotification(userId, notification);
 
@@ -308,19 +303,14 @@ const createNewGroupedNotification = async ({
 };
 export const getUserNotifications = async (userId, page = 1, limit = 20) => {
   try {
-    const skip = (page - 1) * limit;
-
-    const notifications = await prisma.notification.findMany({
-      where: { userId },
-      include: { actor: { select: ACTOR_SELECT } },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit
-    });
-
-    const total = await prisma.notification.count({
-      where: { userId }
-    });
+    const [notifications, total] = await Promise.all([
+      notificationRepository.findNotificationsByUserId(userId, {
+        page,
+        limit,
+        include: { actor: { select: ACTOR_SELECT } }
+      }),
+      notificationRepository.countNotificationsByUserId(userId)
+    ]);
 
     const formatted = notifications.map(n => ({
       ...n,

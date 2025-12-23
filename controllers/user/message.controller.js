@@ -1,10 +1,10 @@
-import prisma from "../../utils/prisma.js";
 import { getIO } from "../../config/socket.js";
-import { checkConversationAccess } from "../../services/conversationService.js";
 import {
-  checkMessageOwnership,
   getMessagesWithAccess,
-  togglePinMessage as togglePinMessageService,
+  deleteMessageService,
+  getMessageStatesService,
+  getMessageEditHistoryService,
+  togglePinMessageWithDetailsService,
   getPinnedMessages as getPinnedMessagesService,
 } from "../../services/messageService.js";
 
@@ -43,37 +43,18 @@ export const deleteMessage = async (req, res) => {
     const { messageId } = req.params;
     const userId = req.user.id;
 
-    // Tìm tin nhắn và kiểm tra quyền xóa
-    const message = await prisma.message.findUnique({
-      where: { id: parseInt(messageId) },
-      include: { sender: true },
+    const result = await deleteMessageService({
+      messageId: parseInt(messageId),
+      userId
     });
 
-    if (!message || message.deletedAt) {
-      return res.status(404).json({
-        success: false,
-        message: 'Không tìm thấy tin nhắn',
-      });
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json(result);
     }
-
-    if (message.senderId !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: 'Bạn không có quyền xóa tin nhắn này',
-      });
-    }
-
-    // Soft delete tin nhắn
-    await prisma.message.update({
-      where: { id: parseInt(messageId) },
-      data: {
-        deletedAt: new Date(),
-      },
-    });
 
     res.json({
       success: true,
-      message: 'Đã xóa tin nhắn',
+      message: result.message
     });
   } catch (error) {
     console.error('Error deleting message:', error);
@@ -91,48 +72,18 @@ export const getMessageStates = async (req, res) => {
     const { messageId } = req.params;
     const userId = req.user.id;
 
-    // Tìm tin nhắn và kiểm tra quyền truy cập
-    const message = await prisma.message.findUnique({
-      where: { id: parseInt(messageId) },
+    const result = await getMessageStatesService({
+      messageId: parseInt(messageId),
+      userId
     });
 
-    if (!message || message.deletedAt) {
-      return res.status(404).json({
-        success: false,
-        message: 'Không tìm thấy tin nhắn',
-      });
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json(result);
     }
-
-    const conversationMember = await prisma.conversationMember.findFirst({
-      where: {
-        conversationId: message.conversationId,
-        userId,
-        leftAt: null,
-      },
-    });
-
-    if (!conversationMember) {
-      return res.status(403).json({
-        success: false,
-        message: 'Bạn không có quyền truy cập cuộc trò chuyện này',
-      });
-    }
-
-    const states = await prisma.messageState.findMany({
-      where: { messageId: parseInt(messageId) },
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true,
-          },
-        },
-      },
-    });
 
     res.json({
       success: true,
-      data: { states },
+      data: { states: result.states }
     });
   } catch (error) {
     console.error('Error getting message states:', error);
@@ -150,42 +101,18 @@ export const getMessageEditHistory = async (req, res) => {
     const { messageId } = req.params;
     const userId = req.user.id;
 
-    // Kiểm tra quyền truy cập conversation thông qua message
-    const message = await checkMessageOwnership(userId, messageId);
-    if (!message) {
-      return res.status(403).json({
-        success: false,
-        message: 'Bạn không có quyền truy cập cuộc trò chuyện này',
-      });
-    }
-
-    if (!message || message.deletedAt) {
-      return res.status(404).json({
-        success: false,
-        message: 'Không tìm thấy tin nhắn',
-      });
-    }
-
-    const editHistory = await prisma.messageEditHistory.findMany({
-      where: { messageId: parseInt(messageId) },
-      include: {
-        editor: {
-          select: {
-            id: true,
-            username: true,
-            fullName: true,
-            avatarUrl: true,
-          },
-        },
-      },
-      orderBy: {
-        editedAt: 'asc',
-      },
+    const result = await getMessageEditHistoryService({
+      messageId: parseInt(messageId),
+      userId
     });
+
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json(result);
+    }
 
     res.json({
       success: true,
-      data: { editHistory },
+      data: { editHistory: result.editHistory }
     });
   } catch (error) {
     console.error('Error getting message edit history:', error);
@@ -202,54 +129,25 @@ export const togglePinMessage = async (req, res) => {
     const { messageId } = req.params;
     const userId = req.user.id;
 
-    // Kiểm tra quyền truy cập conversation thông qua message
-    const message = await checkMessageOwnership(userId, messageId);
-    if (!message) {
-      return res.status(403).json({
-        success: false,
-        message: 'Bạn không có quyền truy cập cuộc trò chuyện này',
-      });
-    }
-
-    if (!message || message.deletedAt) {
-      return res.status(404).json({
-        success: false,
-        message: 'Không tìm thấy tin nhắn',
-      });
-    }
-
-    const result = await togglePinMessageService(messageId, userId);
-
-    const io = getIO();
-    const pinnedMessage = await prisma.message.findUnique({
-      where: { id: parseInt(messageId) },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            username: true,
-            fullName: true,
-            avatarUrl: true,
-          },
-        },
-        pinnedIn: {
-          include: {
-            pinnedBy: {
-              select: {
-                id: true,
-                username: true,
-              },
-            },
-          },
-        },
-      },
+    const result = await togglePinMessageWithDetailsService({
+      messageId: parseInt(messageId),
+      userId
     });
 
-    if (pinnedMessage) {
-      io.to(`conversation_${pinnedMessage.conversationId}`).emit('chat:message_pinned', {
-        message: pinnedMessage,
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json({
+        success: false,
+        message: result.errorMessage
+      });
+    }
+
+    // Emit socket event
+    if (result.message) {
+      const io = getIO();
+      io.to(`conversation_${result.conversationId}`).emit('chat:message_pinned', {
+        message: result.message,
         action: result.action,
-        conversationId: pinnedMessage.conversationId,
+        conversationId: result.conversationId,
       });
     }
 

@@ -1,4 +1,5 @@
 import * as repostRepository from "../repositories/repostRepository.js";
+import * as postRepository from "../repositories/postRepository.js";
 import { getReactionCounts } from "../utils/postStatsHelper.js";
 import { isFollowing } from "./followService.js";
 import { createNotification } from "./notificationService.js";
@@ -25,9 +26,7 @@ class RepostServiceError extends Error {
  */
 export const createRepostService = async (userId, postId, content = '') => {
   // Kiểm tra post tồn tại
-  const originalPost = await prisma.post.findUnique({
-    where: { id: Number(postId) },
-  });
+  const originalPost = await postRepository.findPostByIdUnique(Number(postId));
   
   if (!originalPost) {
     return {
@@ -255,49 +254,13 @@ export const getUserReposts = async (targetUserId, currentUserId) => {
       getReactionCounts(postIds, 'POST'),
       // Trạng thái tương tác của người đang xem (currentUserId) với posts gốc
       // currentUserId luôn có vì route yêu cầu authenticate
-      prisma.reaction.findMany({
-        where: {
-          userId: currentUserId,
-          targetId: { in: postIds },
-          targetType: 'POST'
-        },
-        select: { targetId: true }
-      }),
-      prisma.savedPost.findMany({
-        where: {
-          userId: currentUserId,
-          postId: { in: postIds }
-        },
-        select: { postId: true }
-      }),
-      prisma.repost.findMany({
-        where: {
-          userId: currentUserId,
-          postId: { in: postIds },
-          deletedAt: null
-        },
-        select: { postId: true }
-      }),
+      postRepository.findReactionsByUserAndTargetIds(currentUserId, postIds, 'POST', { targetId: true }),
+      postRepository.findSavedPostsByUserAndPostIds(currentUserId, postIds),
+      postRepository.findRepostsByUserAndPostIds(currentUserId, postIds, { postId: true }),
       // Trạng thái tương tác của người đang xem (currentUserId) với chính reposts
-      prisma.reaction.findMany({
-        where: {
-          userId: currentUserId,
-          targetId: { in: repostIds },
-          targetType: 'REPOST'
-        },
-        select: { targetId: true }
-      }),
+      postRepository.findReactionsByUserAndTargetIds(currentUserId, repostIds, 'REPOST', { targetId: true }),
       // Đếm số lượng reposts với deletedAt: null cho mỗi post
-      prisma.repost.groupBy({
-        by: ['postId'],
-        where: {
-          postId: { in: postIds },
-          deletedAt: null
-        },
-        _count: {
-          id: true
-        }
-      })
+      postRepository.groupRepostsByPostId(postIds)
     ]);
 
     // Chuyển đổi thành Set để lookup nhanh hơn

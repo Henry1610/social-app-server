@@ -1,13 +1,13 @@
-import prisma from "../../utils/prisma.js";
-import { getReactionCounts } from "../../utils/postStatsHelper.js";
-import { isFollowing } from "../../services/followService.js";
 import { 
   createPostService, 
-  updatePostService, 
-  userSelectFields,
-  checkPostAccess,
-  checkUserPostsAccess,
+  updatePostService,
+  getPostByIdService,
+  deletePostService,
+  savePostService,
+  unsavePostService,
   getSavedPostsService,
+  getUserPostsPreviewService,
+  markPostAsViewedService,
   getFeedPostsService
 } from "../../services/postService.js";
 
@@ -67,87 +67,18 @@ export const getMyPostById = async (req, res) => {
       });
     }
 
-    const post = await prisma.post.findFirst({
-      where: {
-        id: parsedPostId,
-        deletedAt: null
-      },
-      include: {
-        user: { select: userSelectFields },
-        media: {
-          select: { id: true, mediaUrl: true, mediaType: true }
-        },
-        _count: { select: { comments: true, reposts: true, savedPosts: true } }
-      },
+    const result = await getPostByIdService({
+      postId: parsedPostId,
+      currentUserId
     });
 
-    if (!post) {
-      return res.status(404).json({
-        success: false,
-        message: 'Bài viết không tồn tại hoặc đã bị xóa!'
-      });
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json(result);
     }
 
-    // Kiểm tra quyền truy cập dựa trên privacy settings bằng service
-    const accessCheck = await checkPostAccess({
-      post,
-      currentUserId,
-      postOwnerId: post.userId
-    });
-
-    if (!accessCheck.allowed) {
-      return res.status(403).json({
-        success: false,
-        message: accessCheck.message
-      });
-    }
-
-    // Get reaction count from Reaction table (only LIKE for posts)
-    const reactionCount = await prisma.reaction.count({
-      where: { targetId: parsedPostId, targetType: 'POST' },
-    });
-
-    // Lấy thêm 10 repost gần nhất
-    const reposts = await prisma.repost.findMany({
-      where: { 
-        postId: parsedPostId,
-        deletedAt: null
-      },
-      include: {
-        user: { select: userSelectFields }
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 10
-    });
-
-    // Kiểm tra xem current user có repost post này không
-    let myRepost = null;
-    if (currentUserId) {
-      myRepost = await prisma.repost.findFirst({
-        where: {
-          userId: currentUserId,
-          postId: parsedPostId,
-          deletedAt: null
-        },
-        include: {
-          user: { select: userSelectFields }
-        }
-      });
-    }
-
-    res.json({ 
-      success: true, 
-      post: { 
-        ...post, 
-        reposts,
-        isRepost: !!myRepost,
-        repostedBy: myRepost?.user || null,
-        repostContent: myRepost?.content || null,
-        _count: {
-          ...post._count,
-          reactions: reactionCount,
-        },
-      } 
+    res.json({
+      success: true,
+      post: result.post
     });
   } catch (error) {
     console.error('Error getting post:', error);
@@ -178,13 +109,6 @@ export const updatePost = async (req, res) => {
       privacySettings
     });
 
-    // Lấy reaction count
-    const reactionCount = await prisma.reaction.count({
-      where: { targetId: Number(postId), targetType: 'POST' },
-    });
-
-    completePost._count.reactions = reactionCount;
-
     res.json({
       success: true,
       message: 'Cập nhật bài viết thành công!',
@@ -214,32 +138,19 @@ export const deletePost = async (req, res) => {
     const { postId } = req.params;
     const userId = req.user.id;
 
-    // Kiểm tra bài viết có tồn tại và thuộc về user
-    const post = await prisma.post.findFirst({
-      where: {
-        id: Number(postId),
-        userId: userId,
-        deletedAt: null
-      }
+    const result = await deletePostService({
+      postId: Number(postId),
+      userId
     });
 
-    if (!post) {
-      return res.status(404).json({
-        success: false,
-        message: 'Bài viết không tồn tại hoặc không thuộc về bạn!'
-      });
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json(result);
     }
-
-    // Soft delete
-    const deletedPost = await prisma.post.update({
-      where: { id: Number(postId) },
-      data: { deletedAt: new Date() }
-    });
 
     res.json({
       success: true,
-      message: 'Xóa bài viết thành công',
-      post: deletedPost
+      message: result.message,
+      post: result.post
     });
   } catch (error) {
     console.error('Error deleting post:', error);
@@ -254,28 +165,21 @@ export const savePost = async (req, res) => {
   try {
     const { postId } = req.params;
     const userId = req.user.id;
-    // Check post tồn tại
-    const post = await prisma.post.findFirst({
-      where: { id: Number(postId), deletedAt: null },
-      select: { id: true },
+
+    const result = await savePostService({
+      postId: Number(postId),
+      userId
     });
-    
-    if (!post) {
-      return res.status(404).json({ success: false, message: 'Bài viết không tồn tại hoặc đã bị xoá!' });
+
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json(result);
     }
 
-    // Save hoặc bỏ qua nếu đã tồn tại
-    const saved = await prisma.savedPost.upsert({
-      where: { userId_postId: { userId: userId, postId: Number(postId) } },
-      update: {}, // nếu đã có thì không cần update gì
-      create: {
-        userId: userId,
-        postId: Number(postId),
-        savedAt: new Date(),
-      },
+    res.json({
+      success: true,
+      message: result.message,
+      saved: result.saved
     });
-
-    res.json({ success: true, message: 'Đã lưu bài viết!', saved });
   } catch (error) {
     console.error('Error saving post:', error);
     res.status(500).json({ success: false, message: 'Lỗi server khi lưu bài viết!' });
@@ -288,11 +192,16 @@ export const unsavePost = async (req, res) => {
     const { postId } = req.params;
     const userId = req.user.id;
 
-    await prisma.savedPost.deleteMany({
-      where: { userId: userId, postId: Number(postId) },
+    const result = await unsavePostService({
+      postId: Number(postId),
+      userId
     });
 
-    res.json({ success: true, message: 'Đã bỏ lưu bài viết.', postId: Number(postId) });
+    res.json({
+      success: true,
+      message: result.message,
+      postId: Number(postId)
+    });
   } catch (error) {
     console.error('Error unsaving post:', error);
     res.status(500).json({ success: false, message: 'Lỗi server khi bỏ lưu bài viết!' });
@@ -342,82 +251,21 @@ export const getUserPostsPreview = async (req, res) => {
     const targetUserId = Number(req.resolvedUserId);
     const currentUserId = req.user.id;
     const { page = 1, limit = 12 } = req.query;
-    const skip = (page - 1) * limit;
 
-    // Kiểm tra quyền xem posts của user bằng service
-    const accessCheck = await checkUserPostsAccess({
+    const result = await getUserPostsPreviewService({
+      targetUserId,
       currentUserId,
-      targetUserId
+      page: parseInt(page),
+      limit: parseInt(limit)
     });
 
-    if (!accessCheck.allowed) {
-      const statusCode = accessCheck.message.includes('không tồn tại') ? 404 : 403;
-      return res.status(statusCode).json({
-        success: false,
-        message: accessCheck.message
-      });
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json(result);
     }
-
-    const isSelf = targetUserId === currentUserId;
-
-    const whereClause = { userId: targetUserId, deletedAt: null };
-
-    if (!isSelf && currentUserId) {
-      const isFollowingUser = await isFollowing(currentUserId, targetUserId);
-      whereClause.whoCanSee = isFollowingUser ? { in: ['everyone', 'followers'] } : 'everyone';
-    } else if (!isSelf) {
-      whereClause.whoCanSee = 'everyone';
-    }
-
-    const posts = await prisma.post.findMany({
-      where: whereClause,
-      select: {
-        id: true,
-        media: { take: 1, select: { mediaUrl: true, mediaType: true } },
-        _count: { select: { comments: true, reposts: true, savedPosts: true } }
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: parseInt(limit)
-    });
-
-    const postIds = posts.map(p => p.id);
-    
-    // Lấy reaction counts và reposts counts cho posts
-    const [reactionCountMap, repostsCountMap] = await Promise.all([
-      getReactionCounts(postIds, 'POST'),
-      // Đếm số lượng reposts với deletedAt: null cho mỗi post
-      prisma.repost.groupBy({
-        by: ['postId'],
-        where: {
-          postId: { in: postIds },
-          deletedAt: null
-        },
-        _count: {
-          id: true
-        }
-      })
-    ]);
-
-    // Tạo map repostsCount: postId -> count (chỉ đếm reposts chưa xóa)
-    const repostsCountByPostId = {};
-    repostsCountMap.forEach(item => {
-      repostsCountByPostId[item.postId] = item._count.id;
-    });
-
-    const postsWithCounts = posts.map(post => ({
-      id: post.id,
-      previewImage: post.media[0]?.mediaUrl || null,
-      previewMediaType: post.media[0]?.mediaType || null,
-      reactionCount: reactionCountMap[post.id] || 0,
-      commentCount: post._count.comments || 0,
-      repostsCount: repostsCountByPostId[post.id] || 0, // Chỉ đếm reposts chưa xóa (deletedAt: null)
-      savesCount: post._count.savedPosts || 0
-    }));
 
     res.json({
       success: true,
-      posts: postsWithCounts,
+      posts: result.posts,
       page: parseInt(page),
       limit: parseInt(limit)
     });
@@ -442,40 +290,18 @@ export const markPostAsViewed = async (req, res) => {
       });
     }
 
-    // Kiểm tra post có tồn tại không
-    const post = await prisma.post.findUnique({
-      where: { id: parsedPostId },
-      select: { id: true, deletedAt: true }
+    const result = await markPostAsViewedService({
+      postId: parsedPostId,
+      userId
     });
 
-    if (!post || post.deletedAt) {
-      return res.status(404).json({
-        success: false,
-        message: 'Bài viết không tồn tại'
-      });
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json(result);
     }
-
-    // Upsert post view (nếu đã xem rồi thì chỉ update viewedAt)
-    await prisma.postView.upsert({
-      where: {
-        postId_userId: {
-          postId: parsedPostId,
-          userId: userId
-        }
-      },
-      update: {
-        viewedAt: new Date()
-      },
-      create: {
-        postId: parsedPostId,
-        userId: userId,
-        viewedAt: new Date()
-      }
-    });
 
     res.json({
       success: true,
-      message: 'Đã đánh dấu bài viết đã xem'
+      message: result.message
     });
   } catch (error) {
     console.error('Error marking post as viewed:', error);

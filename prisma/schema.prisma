@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
   output   = "../generated/prisma"
@@ -14,12 +8,371 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ========================================
-// Phase 1: Core Authentication System
-// Database: PostgreSQL with Prisma
-// Created: 2025-09-07
-// Description: Users, privacy settings, refresh tokens, password resets
-// ========================================
+model User {
+  id                      Int                  @id @default(autoincrement())
+  username                String               @unique @db.VarChar(50)
+  email                   String?              @unique @db.VarChar(100)
+  passwordHash            String?              @map("password_hash") @db.VarChar(255)
+  fullName                String?              @map("full_name") @db.VarChar(100)
+  avatarUrl               String?              @map("avatar_url") @db.VarChar(255)
+  role                    UserRole             @default(user)
+  createdAt               DateTime             @default(now()) @map("created_at")
+  updatedAt               DateTime             @updatedAt @map("updated_at")
+  lastSeen                DateTime?            @map("last_seen")
+  isOnline                Boolean              @default(false) @map("is_online")
+  facebookId              String?              @unique @map("facebook_id")
+  provider                String?              @default("email") @db.VarChar(50)
+  comments                Comment[]
+  conversationMemberships ConversationMember[] @relation("UserConversationMembers")
+  conversationsCreated    Conversation[]       @relation("ConversationCreator")
+  followRequestsSent      FollowRequest[]      @relation("FollowRequestsSent")
+  followRequestsReceived  FollowRequest[]      @relation("FollowRequestsReceived")
+  following               Follow[]             @relation("Following")
+  followers               Follow[]             @relation("Followers")
+  messageEditHistory      MessageEditHistory[] @relation("MessageEditHistory")
+  chatMessageStates       MessageState[]       @relation("ChatMessageStates")
+  sentMessages            Message[]            @relation("ChatMessagesSent")
+  sentNotifications       Notification[]       @relation("ActorNotifications")
+  receivedNotifications   Notification[]       @relation("UserNotifications")
+  pinnedMessages          PinnedMessage[]
+  postViews               PostView[]           @relation("UserPostViews")
+  posts                   Post[]
+  reactions               Reaction[]
+  reposts                 Repost[]
+  saved_posts             SavedPost[]
+  privacySettings         UserPrivacySetting?
+
+  @@index([role])
+  @@index([isOnline])
+  @@index([createdAt])
+  @@index([lastSeen])
+  @@map("users")
+}
+
+model UserPrivacySetting {
+  userId               Int           @id @map("user_id")
+  whoCanMessage        PrivacyOption @default(everyone) @map("who_can_message")
+  whoCanTagMe          PrivacyOption @default(everyone) @map("who_can_tag_me")
+  showOnlineStatus     Boolean       @default(true) @map("show_online_status")
+  createdAt            DateTime      @default(now()) @map("created_at")
+  updatedAt            DateTime      @updatedAt @map("updated_at")
+  isPrivate            Boolean       @default(false) @map("is_private")
+  whoCanFindByUsername PrivacyOption @default(everyone) @map("who_can_find_by_username")
+  user                 User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([isPrivate])
+  @@index([whoCanMessage])
+  @@index([whoCanTagMe])
+  @@index([whoCanFindByUsername])
+  @@index([showOnlineStatus])
+  @@map("user_privacy_settings")
+}
+
+model Post {
+  id            Int           @id @default(autoincrement())
+  userId        Int           @map("user_id")
+  content       String?
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  deletedAt     DateTime?     @map("deleted_at")
+  whoCanComment PrivacyOption @default(everyone)
+  whoCanSee     PrivacyOption @default(everyone)
+  comments      Comment[]
+  media         PostMedia[]
+  views         PostView[]    @relation("PostViews")
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reposts       Repost[]
+  savedPosts    SavedPost[]
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("posts")
+}
+
+model PostMedia {
+  id        Int      @id @default(autoincrement())
+  postId    Int      @map("post_id")
+  mediaUrl  String   @map("media_url") @db.VarChar(500)
+  mediaType String   @default("image") @map("media_type") @db.VarChar(50)
+  createdAt DateTime @default(now()) @map("created_at")
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@index([mediaType])
+  @@map("post_media")
+}
+
+model PostView {
+  id       Int      @id @default(autoincrement())
+  postId   Int?     @map("post_id")
+  userId   Int      @map("user_id")
+  viewedAt DateTime @default(now()) @map("viewed_at")
+  repostId Int?     @map("repost_id")
+  post     Post?    @relation("PostViews", fields: [postId], references: [id], onDelete: Cascade)
+  repost   Repost?  @relation(fields: [repostId], references: [id], onDelete: Cascade)
+  user     User     @relation("UserPostViews", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId], name: "postId_userId", map: "postId_userId_unique")
+  @@unique([repostId, userId], name: "repostId_userId", map: "repostId_userId_unique")
+  @@index([postId])
+  @@index([repostId])
+  @@index([userId])
+  @@index([viewedAt])
+  @@map("post_views")
+}
+
+model Comment {
+  id        Int       @id @default(autoincrement())
+  postId    Int?      @map("post_id")
+  userId    Int       @map("user_id")
+  parentId  Int?      @map("parent_id")
+  content   String
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  repostId  Int?      @map("repost_id")
+  parent    Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies   Comment[] @relation("CommentReplies")
+  post      Post?     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  repost    Repost?   @relation(fields: [repostId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([postId, parentId])
+  @@index([postId, createdAt])
+  @@index([repostId, parentId])
+  @@index([repostId, createdAt])
+  @@index([postId])
+  @@index([repostId])
+  @@index([userId])
+  @@index([parentId])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("comments")
+}
+
+model Reaction {
+  id           Int          @id @default(autoincrement())
+  userId       Int          @map("user_id")
+  targetType   TargetType   @map("target_type")
+  targetId     Int          @map("target_id")
+  reactionType ReactionType @map("reaction_type")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, targetType, targetId])
+  @@index([targetType, targetId])
+  @@index([reactionType])
+  @@index([createdAt])
+  @@map("reactions")
+}
+
+model Repost {
+  id        Int        @id @default(autoincrement())
+  userId    Int        @map("user_id")
+  postId    Int        @map("post_id")
+  content   String?
+  createdAt DateTime   @default(now()) @map("created_at")
+  deletedAt DateTime?  @map("deleted_at")
+  comments  Comment[]
+  views     PostView[]
+  post      Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+  @@index([userId])
+  @@index([postId])
+  @@index([createdAt])
+  @@map("reposts")
+}
+
+model SavedPost {
+  userId  Int      @map("user_id")
+  postId  Int      @map("post_id")
+  savedAt DateTime @default(now()) @map("saved_at")
+  post    Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, postId])
+  @@index([userId])
+  @@index([savedAt])
+  @@map("saved_posts")
+}
+
+model Notification {
+  id         Int                    @id @default(autoincrement())
+  userId     Int                    @map("user_id")
+  actorId    Int                    @map("actor_id")
+  type       NotificationType
+  targetType NotificationTargetType @map("target_type")
+  targetId   Int?                   @map("target_id")
+  createdAt  DateTime               @default(now()) @map("created_at")
+  updatedAt  DateTime               @default(now()) @map("updated_at")
+  metadata   Json?
+  groupKey   String?                @map("group_key")
+  actor      User                   @relation("ActorNotifications", fields: [actorId], references: [id], onDelete: Cascade)
+  user       User                   @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type, targetType, targetId, groupKey], map: "unique_notif_key")
+  @@index([userId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model Follow {
+  followerId  Int      @map("follower_id")
+  followingId Int      @map("following_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  follower    User     @relation("Following", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("Followers", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, followingId])
+  @@index([followingId, createdAt])
+  @@index([followerId, createdAt])
+  @@map("follows")
+}
+
+model FollowRequest {
+  fromUserId Int
+  toUserId   Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  id         Int      @id @default(autoincrement())
+  fromUser   User     @relation("FollowRequestsSent", fields: [fromUserId], references: [id])
+  toUser     User     @relation("FollowRequestsReceived", fields: [toUserId], references: [id])
+
+  @@unique([fromUserId, toUserId])
+  @@index([toUserId])
+  @@map("follow_requests")
+}
+
+model Conversation {
+  id             Int                  @id @default(autoincrement())
+  type           ConversationType     @default(DIRECT)
+  name           String?              @db.VarChar(100)
+  avatarUrl      String?              @map("avatar_url") @db.VarChar(255)
+  createdBy      Int?                 @map("created_by")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+  lastMessageAt  DateTime?            @map("last_message_at")
+  members        ConversationMember[]
+  creator        User?                @relation("ConversationCreator", fields: [createdBy], references: [id])
+  messages       Message[]
+  pinnedMessages PinnedMessage[]
+
+  @@index([type])
+  @@index([lastMessageAt])
+  @@index([createdBy])
+  @@map("conversations")
+}
+
+model ConversationMember {
+  id             Int          @id @default(autoincrement())
+  conversationId Int          @map("conversation_id")
+  userId         Int          @map("user_id")
+  role           MemberRole   @default(MEMBER)
+  joinedAt       DateTime     @default(now()) @map("joined_at")
+  leftAt         DateTime?    @map("left_at")
+  lastReadAt     DateTime?    @map("last_read_at")
+  isMuted        Boolean      @default(false) @map("is_muted")
+  isPinned       Boolean      @default(false) @map("is_pinned")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation("UserConversationMembers", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@index([conversationId])
+  @@index([lastReadAt])
+  @@index([isPinned])
+  @@index([userId, isPinned, lastReadAt])
+  @@index([conversationId, leftAt])
+  @@map("conversation_members")
+}
+
+model Message {
+  id             Int                  @id @default(autoincrement())
+  conversationId Int                  @map("conversation_id")
+  senderId       Int?                 @map("sender_id")
+  type           MessageType          @default(TEXT)
+  content        String?
+  mediaUrl       String?              @map("media_url") @db.VarChar(500)
+  replyToId      Int?                 @map("reply_to_id")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+  deletedAt      DateTime?            @map("deleted_at")
+  isSystem       Boolean              @default(false) @map("is_system")
+  isRecalled     Boolean              @default(false) @map("is_recalled")
+  recalledAt     DateTime?            @map("recalled_at")
+  fileSize       Int?                 @map("file_size")
+  filename       String?              @map("filename") @db.VarChar(255)
+  mediaType      String?              @map("media_type") @db.VarChar(100)
+  editHistory    MessageEditHistory[]
+  states         MessageState[]       @relation("ChatMessageStates")
+  conversation   Conversation         @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  replyTo        Message?             @relation("MessageReplies", fields: [replyToId], references: [id])
+  replies        Message[]            @relation("MessageReplies")
+  sender         User?                @relation("ChatMessagesSent", fields: [senderId], references: [id], onDelete: Cascade)
+  pinnedIn       PinnedMessage[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@index([replyToId])
+  @@index([deletedAt])
+  @@index([type])
+  @@index([conversationId, deletedAt])
+  @@index([conversationId, isSystem])
+  @@map("messages")
+}
+
+model MessageState {
+  id        Int            @id @default(autoincrement())
+  messageId Int            @map("message_id")
+  userId    Int            @map("user_id")
+  status    DeliveryStatus @default(SENT)
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+  message   Message        @relation("ChatMessageStates", fields: [messageId], references: [id], onDelete: Cascade)
+  user      User           @relation("ChatMessageStates", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+  @@index([status])
+  @@map("message_states")
+}
+
+model MessageEditHistory {
+  id         Int      @id @default(autoincrement())
+  messageId  Int      @map("message_id")
+  oldContent String?  @map("old_content")
+  newContent String   @map("new_content")
+  editedBy   Int      @map("edited_by")
+  editedAt   DateTime @default(now()) @map("edited_at")
+  editor     User     @relation("MessageEditHistory", fields: [editedBy], references: [id], onDelete: Cascade)
+  message    Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([editedBy])
+  @@index([editedAt])
+  @@map("message_edit_history")
+}
+
+model PinnedMessage {
+  id             Int          @id @default(autoincrement())
+  conversationId Int          @map("conversation_id")
+  messageId      Int          @map("message_id")
+  pinnedById     Int          @map("pinned_by_id")
+  pinnedAt       DateTime     @default(now()) @map("pinned_at")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message        Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  pinnedBy       User         @relation(fields: [pinnedById], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, messageId])
+  @@index([conversationId, pinnedAt])
+  @@index([pinnedById])
+  @@map("pinned_messages")
+}
 
 enum UserRole {
   user
@@ -48,21 +401,16 @@ enum TargetType {
 }
 
 enum NotificationType {
-  // Follow related
+  COMMENT
   FOLLOW
+  MENTION
+  REPOST
+  REPLY
   FOLLOW_REQUEST
+  REACTION
   FOLLOW_ACCEPTED
   FOLLOW_REJECTED
-
-  // Interaction on posts/comments
-  COMMENT // Bạn được comment
-  REPLY // Comment của bạn được reply
-  MENTION // Bạn được mention
-  REACTION // Bạn được like/emoji react
-  REPOST // Bạn được repost
-
-  // Direct messaging
-  MESSAGE // Tin nhắn mới
+  MESSAGE
 }
 
 enum NotificationTargetType {
@@ -71,288 +419,12 @@ enum NotificationTargetType {
   USER
   MESSAGE
   CONVERSATION
+  REPOST
 }
 
-model User {
-  id           Int       @id @default(autoincrement())
-  username     String    @unique @db.VarChar(50)
-  email        String?   @unique @db.VarChar(100)
-  passwordHash String?   @map("password_hash") @db.VarChar(255)
-  fullName     String?   @map("full_name") @db.VarChar(100)
-  avatarUrl    String?   @map("avatar_url") @db.VarChar(255)
-  role         UserRole  @default(user)
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
-  lastSeen     DateTime? @map("last_seen")
-  isOnline     Boolean   @default(false) @map("is_online")
-  facebookId   String?   @unique @map("facebook_id")
-  provider     String?   @default("email") @db.VarChar(50)
-
-  // Relations (Phase 1 only)
-  privacySettings         UserPrivacySetting?
-  posts                   Post[]
-  comments                Comment[]
-  reactions               Reaction[]
-  reposts                 Repost[]
-  saved_posts             SavedPost[]
-  postViews               PostView[]           @relation("UserPostViews")
-  sentNotifications       Notification[]       @relation("ActorNotifications")
-  receivedNotifications   Notification[]       @relation("UserNotifications")
-  following               Follow[]             @relation("Following") // user này follow người khác
-  followers               Follow[]             @relation("Followers") // user này được người khác follow
-  followRequestsSent      FollowRequest[]      @relation("FollowRequestsSent")
-  followRequestsReceived  FollowRequest[]      @relation("FollowRequestsReceived")
-  // Chat relations
-  sentMessages            Message[]            @relation("ChatMessagesSent")
-  chatMessageStates       MessageState[]       @relation("ChatMessageStates")
-  conversationMemberships ConversationMember[] @relation("UserConversationMembers")
-  messageEditHistory      MessageEditHistory[] @relation("MessageEditHistory")
-  conversationsCreated    Conversation[]       @relation("ConversationCreator")
-  pinnedMessages          PinnedMessage[]
-
-  // Indexes for authentication and core user operations
-  @@index([role]) // Admin/user filtering
-  @@index([isOnline]) // Online status queries
-  @@index([createdAt]) // User registration analytics
-  @@index([lastSeen]) // Activity tracking
-  @@map("users")
-}
-
-model UserPrivacySetting {
-  userId               Int           @id @map("user_id")
-  isPrivate            Boolean       @default(false) @map("is_private")
-  whoCanMessage        PrivacyOption @default(everyone) @map("who_can_message")
-  whoCanTagMe          PrivacyOption @default(everyone) @map("who_can_tag_me")
-  whoCanFindByUsername PrivacyOption @default(everyone) @map("who_can_find_by_username")
-  showOnlineStatus     Boolean       @default(true) @map("show_online_status")
-  createdAt            DateTime      @default(now()) @map("created_at")
-  updatedAt            DateTime      @updatedAt @map("updated_at")
-
-  // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // Indexes
-  @@index([isPrivate])
-  @@index([whoCanMessage])
-  @@index([whoCanTagMe])
-  @@index([whoCanFindByUsername])
-  @@index([showOnlineStatus])
-  @@map("user_privacy_settings")
-}
-
-model Post {
-  id            Int           @id @default(autoincrement())
-  userId        Int           @map("user_id")
-  content       String?       @db.Text
-  whoCanSee     PrivacyOption @default(everyone)
-  whoCanComment PrivacyOption @default(everyone)
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
-  deletedAt     DateTime?     @map("deleted_at")
-
-  // Relations
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  media      PostMedia[]
-  comments   Comment[]
-  reposts    Repost[]
-  savedPosts SavedPost[]
-  views      PostView[]  @relation("PostViews")
-
-  // Indexes
-  @@index([userId])
-  @@index([createdAt])
-  @@index([deletedAt])
-  @@map("posts")
-}
-
-model PostMedia {
-  id        Int      @id @default(autoincrement())
-  postId    Int      @map("post_id")
-  mediaUrl  String   @map("media_url") @db.VarChar(500)
-  mediaType String   @default("image") @map("media_type") @db.VarChar(50) // image, video, gif
-  createdAt DateTime @default(now()) @map("created_at")
-
-  // Relations
-  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
-
-  // Indexes
-  @@index([postId])
-  @@index([mediaType])
-  @@map("post_media")
-}
-
-model PostView {
-  id       Int      @id @default(autoincrement())
-  postId   Int?     @map("post_id") // Nullable để support repost views
-  repostId Int?     @map("repost_id") // Nullable để support repost views
-  userId   Int      @map("user_id")
-  viewedAt DateTime @default(now()) @map("viewed_at")
-
-  // Relations
-  post   Post?   @relation("PostViews", fields: [postId], references: [id], onDelete: Cascade)
-  repost Repost? @relation(fields: [repostId], references: [id], onDelete: Cascade)
-  user   User    @relation("UserPostViews", fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([postId, userId], name: "postId_userId", map: "postId_userId_unique")
-  @@unique([repostId, userId], name: "repostId_userId", map: "repostId_userId_unique")
-  @@index([postId])
-  @@index([repostId])
-  @@index([userId])
-  @@index([viewedAt])
-  @@map("post_views")
-}
-
-  model Comment {
-    id        Int       @id @default(autoincrement())
-    postId    Int?      @map("post_id") // Nullable để support repost comments
-    repostId  Int?      @map("repost_id") // Nullable để support repost comments
-    userId    Int       @map("user_id")
-    parentId  Int?      @map("parent_id") // Cho nested comments
-    content   String    @db.Text
-    createdAt DateTime  @default(now()) @map("created_at")
-    updatedAt DateTime  @updatedAt @map("updated_at")
-    deletedAt DateTime? @map("deleted_at")
-
-    // Relations
-    post    Post?     @relation(fields: [postId], references: [id], onDelete: Cascade)
-    repost  Repost?   @relation(fields: [repostId], references: [id], onDelete: Cascade)
-    user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-    parent  Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
-    replies Comment[] @relation("CommentReplies")
-
-    // Thêm composite index cho nested comments
-    @@index([postId, parentId]) // Query replies nhanh hơn
-    @@index([postId, createdAt]) // Phân trang comments
-    @@index([repostId, parentId]) // Query replies cho repost nhanh hơn
-    @@index([repostId, createdAt]) // Phân trang comments cho repost
-    // Indexes
-    @@index([postId])
-    @@index([repostId])
-    @@index([userId])
-    @@index([parentId])
-    @@index([createdAt])
-    @@index([deletedAt])
-    // Constraint: comment phải có postId hoặc repostId (không thể có cả hai hoặc không có cả hai)
-    @@map("comments")
-  }
-
-model Reaction {
-  id           Int          @id @default(autoincrement())
-  userId       Int          @map("user_id")
-  targetType   TargetType   @map("target_type")
-  targetId     Int          @map("target_id")
-  reactionType ReactionType @map("reaction_type")
-  createdAt    DateTime     @default(now()) @map("created_at")
-  updatedAt    DateTime     @updatedAt @map("updated_at")
-
-  // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // Unique constraint: một user chỉ react 1 lần cho 1 target
-  @@unique([userId, targetType, targetId])
-  @@index([targetType, targetId])
-  @@index([reactionType])
-  @@index([createdAt])
-  @@map("reactions")
-}
-
-model Repost {
-  id        Int       @id @default(autoincrement())
-  userId    Int       @map("user_id")
-  postId    Int       @map("post_id")
-  content   String?   @db.Text // Comment khi repost
-  createdAt DateTime  @default(now()) @map("created_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  // Relations
-  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  post     Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
-  comments Comment[]
-  views    PostView[]
-
-  // Unique constraint: một user chỉ repost 1 lần cho 1 post
-  @@unique([userId, postId])
-  @@index([userId])
-  @@index([postId])
-  @@index([createdAt])
-  @@map("reposts")
-}
-
-model SavedPost {
-  userId  Int      @map("user_id")
-  postId  Int      @map("post_id")
-  savedAt DateTime @default(now()) @map("saved_at")
-
-  // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
-
-  // Composite primary key
-  @@id([userId, postId])
-  @@index([userId])
-  @@index([savedAt])
-  @@map("saved_posts")
-}
-
-model Notification {
-  id         Int                    @id @default(autoincrement())
-  userId     Int                    @map("user_id") // người nhận
-  actorId    Int                    @map("actor_id") // người thực hiện hành động
-  type       NotificationType
-  targetType NotificationTargetType @map("target_type")
-  targetId   Int?                   @map("target_id")
-  groupKey   String?                @map("group_key") // gom nhóm theo thời gian hoặc người
-  metadata   Json? // dữ liệu phụ (ví dụ danh sách actorIds)
-  createdAt  DateTime               @default(now()) @map("created_at")
-  updatedAt  DateTime               @default(now()) @map("updated_at")
-
-  // Relations
-  user  User @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
-  actor User @relation("ActorNotifications", fields: [actorId], references: [id], onDelete: Cascade)
-
-  //constraint
-  @@unique([userId, type, targetType, targetId, groupKey], map: "unique_notif_key")
-  // Indexes
-  @@index([userId])
-  @@index([actorId])
-  @@index([createdAt])
-  @@map("notifications")
-}
-
-model Follow {
-  followerId  Int      @map("follower_id") // id của người đi follow
-  followingId Int      @map("following_id") // id của người bị follow
-  createdAt   DateTime @default(now()) @map("created_at")
-
-  follower  User @relation("Following", fields: [followerId], references: [id], onDelete: Cascade)
-  following User @relation("Followers", fields: [followingId], references: [id], onDelete: Cascade)
-
-  @@id([followerId, followingId]) // composite primary key
-  @@index([followingId, createdAt]) // Lấy danh sách followers
-  @@index([followerId, createdAt]) // Lấy danh sách following
-  @@map("follows")
-}
-
-model FollowRequest {
-  id         Int  @id @default(autoincrement())
-  fromUserId Int
-  fromUser   User @relation("FollowRequestsSent", fields: [fromUserId], references: [id])
-
-  toUserId Int
-  toUser   User @relation("FollowRequestsReceived", fields: [toUserId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([fromUserId, toUserId]) // 1 user chỉ gửi 1 request cho 1 user
-  @@index([toUserId]) // tăng tốc query lấy request pending cho 1 user
-  @@map("follow_requests")
-}
-
-// ================== ENUMS ==================
 enum ConversationType {
-  DIRECT // Chat 1-1
-  GROUP // Chat nhóm
+  DIRECT
+  GROUP
 }
 
 enum MessageType {
@@ -371,148 +443,4 @@ enum DeliveryStatus {
 enum MemberRole {
   ADMIN
   MEMBER
-}
-
-// Bảng Conversation - Lưu các cuộc trò chuyện
-model Conversation {
-  id            Int              @id @default(autoincrement())
-  type          ConversationType @default(DIRECT)
-  name          String?          @db.VarChar(100) // Tên nhóm (nullable cho direct chat)
-  avatarUrl     String?          @map("avatar_url") @db.VarChar(255) // Avatar nhóm
-  createdBy     Int?             @map("created_by") // User tạo nhóm
-  createdAt     DateTime         @default(now()) @map("created_at")
-  updatedAt     DateTime         @updatedAt @map("updated_at")
-  lastMessageAt DateTime?        @map("last_message_at") // Thời gian tin nhắn cuối
-
-  // Relations
-  creator        User?                @relation("ConversationCreator", fields: [createdBy], references: [id], onDelete: SetNull)
-  members        ConversationMember[]
-  messages       Message[]
-  pinnedMessages PinnedMessage[]
-
-  // Indexes
-  @@index([type])
-  @@index([lastMessageAt])
-  @@index([createdBy])
-  @@map("conversations")
-}
-
-// Bảng ConversationMember - Thành viên trong conversation
-model ConversationMember {
-  id             Int        @id @default(autoincrement())
-  conversationId Int        @map("conversation_id")
-  userId         Int        @map("user_id")
-  role           MemberRole @default(MEMBER)
-  joinedAt       DateTime   @default(now()) @map("joined_at")
-  leftAt         DateTime?  @map("left_at")
-  lastReadAt     DateTime?  @map("last_read_at") // Thời gian đọc tin nhắn cuối
-  isMuted        Boolean    @default(false) @map("is_muted") // Tắt thông báo
-  isPinned       Boolean    @default(false) @map("is_pinned") // Ghim hội thoại
-
-  // Relations
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  user         User         @relation("UserConversationMembers", fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([conversationId, userId])
-  @@index([userId])
-  @@index([conversationId])
-  @@index([lastReadAt])
-  @@index([isPinned])
-  @@index([userId, isPinned, lastReadAt])
-  @@index([conversationId, leftAt])
-  @@map("conversation_members")
-}
-
-// Bảng Message - Tin nhắn
-model Message {
-  id             Int         @id @default(autoincrement())
-  conversationId Int         @map("conversation_id")
-  senderId       Int?        @map("sender_id") // null nếu là tin nhắn hệ thống
-  type           MessageType @default(TEXT)
-  content        String?     @db.Text
-  mediaUrl       String?     @map("media_url") @db.VarChar(500)
-  mediaType      String?     @map("media_type") @db.VarChar(100)
-  filename       String?     @map("filename") @db.VarChar(255)
-  fileSize       Int?        @map("file_size")
-  replyToId      Int?        @map("reply_to_id")
-  isRecalled     Boolean     @default(false) @map("is_recalled")
-  recalledAt     DateTime?   @map("recalled_at")
-  createdAt      DateTime    @default(now()) @map("created_at")
-  updatedAt      DateTime    @updatedAt @map("updated_at")
-  deletedAt      DateTime?   @map("deleted_at")
-  isSystem       Boolean     @default(false) @map("is_system")
-
-  // Relations
-  conversation Conversation         @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender       User?                @relation("ChatMessagesSent", fields: [senderId], references: [id], onDelete: Cascade)
-  replyTo      Message?             @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
-  replies      Message[]            @relation("MessageReplies")
-  states       MessageState[]       @relation("ChatMessageStates")
-  pinnedIn     PinnedMessage[]
-  editHistory  MessageEditHistory[]
-
-  @@index([conversationId, createdAt])
-  @@index([senderId])
-  @@index([replyToId])
-  @@index([deletedAt])
-  @@index([type])
-  @@index([conversationId, deletedAt])
-  @@index([conversationId, isSystem])
-  @@map("messages")
-}
-
-// Bảng MessageState - Trạng thái tin nhắn (đã gửi, đã nhận, đã đọc)
-model MessageState {
-  id        Int            @id @default(autoincrement())
-  messageId Int            @map("message_id")
-  userId    Int            @map("user_id")
-  status    DeliveryStatus @default(SENT)
-  createdAt DateTime       @default(now()) @map("created_at")
-  updatedAt DateTime       @updatedAt @map("updated_at")
-
-  // Relations
-  message Message @relation("ChatMessageStates", fields: [messageId], references: [id], onDelete: Cascade)
-  user    User    @relation("ChatMessageStates", fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([messageId, userId])
-  @@index([userId])
-  @@index([status])
-  @@map("message_states")
-}
-
-// Bảng MessageEditHistory - Lịch sử chỉnh sửa tin nhắn
-model MessageEditHistory {
-  id         Int      @id @default(autoincrement())
-  messageId  Int      @map("message_id")
-  oldContent String?  @map("old_content") @db.Text
-  newContent String   @map("new_content") @db.Text
-  editedBy   Int      @map("edited_by")
-  editedAt   DateTime @default(now()) @map("edited_at")
-
-  // Relations
-  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  editor  User    @relation("MessageEditHistory", fields: [editedBy], references: [id], onDelete: Cascade)
-
-  @@index([messageId])
-  @@index([editedBy])
-  @@index([editedAt])
-  @@map("message_edit_history")
-}
-
-// Bảng PinnedMessage - Tin nhắn được ghim
-model PinnedMessage {
-  id             Int      @id @default(autoincrement())
-  conversationId Int      @map("conversation_id")
-  messageId      Int      @map("message_id")
-  pinnedById     Int      @map("pinned_by_id")
-  pinnedAt       DateTime @default(now()) @map("pinned_at")
-
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  pinnedBy     User         @relation(fields: [pinnedById], references: [id], onDelete: Cascade)
-
-  @@unique([conversationId, messageId])
-  @@index([conversationId, pinnedAt])
-  @@index([pinnedById])
-  @@map("pinned_messages")
 }

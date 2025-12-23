@@ -1,3 +1,4 @@
+import * as userRepository from "../repositories/userRepository.js";
 import prisma from "../utils/prisma.js";
 
 /**
@@ -11,6 +12,8 @@ export const searchUsers = async (query, currentUserId = null) => {
     return [];
   }
 
+  // Note: searchUsers cần complex query với OR và followers relation
+  // Tạm thời vẫn dùng prisma trực tiếp, có thể bổ sung vào userRepository sau
   const users = await prisma.user.findMany({
     where: {
       OR: [

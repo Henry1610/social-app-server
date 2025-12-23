@@ -1,126 +1,84 @@
-import { uploadBufferToCloudinary } from '../../services/uploadService.js'
-import { checkConversationAccess } from '../../services/conversationService.js'
-import prisma from '../../utils/prisma.js'
+import {
+  uploadChatMediaService,
+  uploadPostMediaService,
+  uploadAvatarService
+} from '../../services/uploadService.js'
 
 export const uploadChatMedia = async (req, res) => {
   try {
-    const userId = req.user.id
-    const { conversationId } = req.body
-    if (!conversationId) return res.status(400).json({ success: false, message: 'Thiếu conversationId' })
+    const userId = req.user.id;
+    const { conversationId } = req.body;
+    const files = req.files || [];
 
-    const hasAccess = await checkConversationAccess(userId, conversationId)
-    if (!hasAccess) return res.status(403).json({ success: false, message: 'Không có quyền truy cập cuộc trò chuyện này' })
+    const result = await uploadChatMediaService({
+      userId,
+      conversationId,
+      files
+    });
 
-    const files = req.files || []
-    if (files.length === 0) return res.status(400).json({ success: false, message: 'Không có file' })
-
-    const now = new Date()
-    const folder = `chat/${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}`
-
-    const results = []
-    for (const f of files) {
-      const uploaded = await uploadBufferToCloudinary(f.buffer, f.originalname, f.mimetype, folder)
-      
-      // Xác định type của file
-      let fileType = 'FILE'
-      if (f.mimetype.startsWith('image/')) {
-        fileType = 'IMAGE'
-      } else if (f.mimetype.startsWith('video/')) {
-        fileType = 'VIDEO'
-      }
-      
-      results.push({
-        url: uploaded.secure_url,
-        type: fileType,
-        mediaType: f.mimetype,
-        filename: f.originalname,
-        size: f.size,
-        width: uploaded.width || null,
-        height: uploaded.height || null,
-        duration: uploaded.duration || null,
-      })
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json(result);
     }
 
-    res.json({ success: true, data: { files: results } })
+    res.json({
+      success: true,
+      data: result.data
+    });
   } catch (err) {
-    if (err.message === 'INVALID_FILE_TYPE') return res.status(400).json({ success: false, message: 'Định dạng không hợp lệ' })
-    res.status(500).json({ success: false, message: err?.message || 'Upload thất bại' })
+    console.error('Upload chat media error:', err);
+    res.status(500).json({
+      success: false,
+      message: err?.message || 'Upload thất bại'
+    });
   }
 }
 
 export const uploadPostMedia = async (req, res) => {
   try {
-    const files = req.files || []
-    if (files.length === 0) return res.status(400).json({ success: false, message: 'Không có file' })
+    const files = req.files || [];
 
-    const now = new Date()
-    const folder = `posts/${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}`
+    const result = await uploadPostMediaService({ files });
 
-    const results = []
-    for (const f of files) {
-      if (!f.mimetype.startsWith('image/') && !f.mimetype.startsWith('video/')) {
-        continue // Bỏ qua file không phải ảnh/video
-      }
-      const uploaded = await uploadBufferToCloudinary(f.buffer, f.originalname, f.mimetype, folder)
-      results.push({
-        url: uploaded.secure_url,
-        type: f.mimetype.startsWith('video/') ? 'video' : 'image',
-        mediaType: f.mimetype,
-        width: uploaded.width || null,
-        height: uploaded.height || null,
-        duration: uploaded.duration || null,
-      })
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json(result);
     }
 
-    res.json({ success: true, data: { files: results } })
+    res.json({
+      success: true,
+      data: result.data
+    });
   } catch (err) {
-    if (err.message === 'INVALID_FILE_TYPE') return res.status(400).json({ success: false, message: 'Định dạng không hợp lệ' })
-    res.status(500).json({ success: false, message: err?.message || 'Upload thất bại' })
+    console.error('Upload post media error:', err);
+    res.status(500).json({
+      success: false,
+      message: err?.message || 'Upload thất bại'
+    });
   }
 }
 
 export const uploadAvatar = async (req, res) => {
   try {
-    const userId = req.user.id
-    const file = req.file
-    
-    if (!file) return res.status(400).json({ success: false, message: 'Không có file' })
-    
-    if (!file.mimetype.startsWith('image/')) {
-      return res.status(400).json({ success: false, message: 'Chỉ chấp nhận file ảnh' })
+    const userId = req.user.id;
+    const file = req.file;
+
+    const result = await uploadAvatarService({
+      userId,
+      file
+    });
+
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json(result);
     }
 
-    const folder = `avatars/${new Date().getFullYear()}/${String(new Date().getMonth() + 1).padStart(2, '0')}`
-    const uploaded = await uploadBufferToCloudinary(file.buffer, file.originalname, file.mimetype, folder)
-    
-    const updatedUser = await prisma.user.update({
-      where: { id: userId },
-      data: { avatarUrl: uploaded.secure_url },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        fullName: true,
-        avatarUrl: true,
-        role: true,
-        createdAt: true,
-        provider: true,
-        facebookId: true,
-        privacySettings: {
-          select: {
-            isPrivate: true,
-            whoCanMessage: true,
-            whoCanTagMe: true,
-            whoCanFindByUsername: true,
-            showOnlineStatus: true,
-          },
-        },
-      },
-    })
-
-    res.json({ success: true, user: updatedUser })
+    res.json({
+      success: true,
+      user: result.user
+    });
   } catch (err) {
-    if (err.message === 'INVALID_FILE_TYPE') return res.status(400).json({ success: false, message: 'Định dạng không hợp lệ' })
-    res.status(500).json({ success: false, message: err?.message || 'Upload thất bại' })
+    console.error('Upload avatar error:', err);
+    res.status(500).json({
+      success: false,
+      message: err?.message || 'Upload thất bại'
+    });
   }
 }

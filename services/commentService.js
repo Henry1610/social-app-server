@@ -1,4 +1,3 @@
-import prisma from "../utils/prisma.js";
 import { isFollowing } from "./followService.js";
 import { createNotification } from "./notificationService.js";
 import * as commentRepository from "../repositories/commentRepository.js";
@@ -551,13 +550,17 @@ export const commentRepostService = async (repostId, userId, content) => {
   // - Nếu chủ repost khác chủ post gốc và người comment không phải chủ post gốc, cũng gửi cho chủ post gốc
   if (repost.userId !== userId) {
     try {
-      // Gửi notification cho chủ repost
+      // Gửi notification cho chủ repost với metadata để client có thể navigate đúng
       await createNotification({
         userId: repost.userId,
         actorId: userId,
         type: "COMMENT",
         targetType: "REPOST",
         targetId: repostId,
+        metadata: {
+          repostId: repostId,
+          postId: repost.post.id
+        }
       });
     } catch (error) {
       console.error("Error creating notification in commentRepostService (repost owner):", error);
@@ -572,6 +575,10 @@ export const commentRepostService = async (repostId, userId, content) => {
           type: "COMMENT",
           targetType: "POST",
           targetId: repost.post.id,
+          metadata: {
+            repostId: repostId,
+            postId: repost.post.id
+          }
         });
       } catch (error) {
         console.error("Error creating notification in commentRepostService (post owner):", error);

@@ -1,4 +1,10 @@
 import prisma from "../utils/prisma.js";
+import * as postRepository from "../repositories/postRepository.js";
+import * as userRepository from "../repositories/userRepository.js";
+import * as followRepository from "../repositories/followRepository.js";
+import * as reactionRepository from "../repositories/reactionRepository.js";
+import { getReactionCounts } from "../utils/postStatsHelper.js";
+import { isFollowing } from "./followService.js";
 
 // Helper: User select fields (dùng chung cho nhiều queries)
 export const userSelectFields = {
@@ -33,34 +39,16 @@ export const postIncludeBasic = {
 export const createPostService = async ({ userId, content, mediaUrls = [], privacySettings = {} }) => {
   // Transaction
   const post = await prisma.$transaction(async (tx) => {
-    // 1. Tạo post
-    const createdPost = await tx.post.create({
-      data: {
-        content: content || null,
-        user: { connect: { id: userId } },
-        whoCanSee: privacySettings.whoCanSee || 'everyone',
-        whoCanComment: privacySettings.whoCanComment || 'everyone',
-      },
+    return await postRepository.createPostWithTransaction(tx, {
+      userId,
+      content,
+      mediaUrls,
+      privacySettings
     });
-
-    // 2. Tạo media nếu có
-    if (mediaUrls.length > 0) {
-      const mediaData = mediaUrls.map(m => ({
-        postId: createdPost.id,
-        mediaUrl: m.url,
-        mediaType: m.type || 'image',
-      }));
-      await tx.postMedia.createMany({ data: mediaData });
-    }
-
-    return createdPost;
   });
 
   // Fetch full post với relations
-  const completePost = await prisma.post.findUnique({
-    where: { id: post.id },
-    include: postIncludeBasic,
-  });
+  const completePost = await postRepository.findPostByIdUnique(post.id, postIncludeBasic);
 
   return completePost;
 };
@@ -73,63 +61,26 @@ export const createPostService = async ({ userId, content, mediaUrls = [], priva
  * @param {string} options.content - Nội dung mới
  * @param {Array} options.mediaUrls - Danh sách media URLs mới (undefined = không thay đổi)
  * @param {Object} options.privacySettings - Privacy settings mới
- * @returns {Promise<Object>} Post đã được cập nhật
+ * @returns {Promise<Object>} Post đã được cập nhật với reaction count
  */
 export const updatePostService = async ({ postId, userId, content, mediaUrls, privacySettings = {} }) => {
   // Transaction
   await prisma.$transaction(async (tx) => {
-    // Lấy post hiện tại để có dữ liệu mặc định
-    const existingPost = await tx.post.findFirst({
-      where: { id: postId, userId: userId, deletedAt: null }
+    return await postRepository.updatePostWithTransaction(tx, {
+      postId,
+      userId,
+      content,
+      mediaUrls,
+      privacySettings
     });
-
-    if (!existingPost) {
-      throw new Error('Bài viết không tồn tại hoặc không thuộc về bạn!');
-    }
-
-    // Prepare update data
-    const updateData = {
-      content: content ?? existingPost.content,
-      updatedAt: new Date()
-    };
-
-    // Privacy settings - update directly on Post model
-    if (privacySettings && Object.keys(privacySettings).length > 0) {
-      if (privacySettings.whoCanSee !== undefined) {
-        updateData.whoCanSee = privacySettings.whoCanSee;
-      }
-      if (privacySettings.whoCanComment !== undefined) {
-        updateData.whoCanComment = privacySettings.whoCanComment;
-      }
-    }
-
-    // Update main post
-    const post = await tx.post.update({
-      where: { id: postId },
-      data: updateData,
-    });
-
-    // Media
-    if (mediaUrls !== undefined) {
-      await tx.postMedia.deleteMany({ where: { postId: post.id } });
-      if (mediaUrls.length > 0) {
-        await tx.postMedia.createMany({
-          data: mediaUrls.map(m => ({
-            postId: post.id,
-            mediaUrl: m.mediaUrl,
-            mediaType: m.type || 'image',
-            createdAt: new Date(),
-          })),
-        });
-      }
-    }
   });
 
   // Fetch complete post với relations sau khi transaction hoàn thành
-  const completePost = await prisma.post.findUnique({
-    where: { id: postId },
-    include: postIncludeBasic,
-  });
+  const completePost = await postRepository.findPostByIdUnique(postId, postIncludeBasic);
+
+  // Lấy reaction count
+  const reactionCount = await postRepository.countReactionsByPostId(postId, 'POST');
+  completePost._count.reactions = reactionCount;
 
   return completePost;
 };
@@ -197,13 +148,10 @@ export const checkUserPostsAccess = async ({ currentUserId, targetUserId }) => {
   }
 
   // Lấy thông tin user để check privacy
-  const targetUser = await prisma.user.findUnique({
-    where: { id: targetUserId },
-    select: {
-      id: true,
-      privacySettings: {
-        select: { isPrivate: true }
-      }
+  const targetUser = await userRepository.findUserByIdWithSelect(targetUserId, {
+    id: true,
+    privacySettings: {
+      select: { isPrivate: true }
     }
   });
 
@@ -247,11 +195,10 @@ export const checkUserPostsAccess = async ({ currentUserId, targetUserId }) => {
  * @returns {Promise<{items: Array, total: number}>}
  */
 export const getSavedPostsService = async ({ userId, page = 1, limit = 10 }) => {
-  const skip = (page - 1) * limit;
-
   const [items, total] = await Promise.all([
-    prisma.savedPost.findMany({
-      where: { userId: userId, post: { deletedAt: null } },
+    postRepository.findSavedPostsByUserId(userId, {
+      page,
+      limit,
       include: {
         post: {
           include: {
@@ -263,13 +210,8 @@ export const getSavedPostsService = async ({ userId, page = 1, limit = 10 }) => 
           },
         },
       },
-      orderBy: { savedAt: 'desc' },
-      skip,
-      take: parseInt(limit),
     }),
-    prisma.savedPost.count({
-      where: { userId: userId, post: { deletedAt: null } },
-    }),
+    postRepository.countSavedPostsByUserId(userId),
   ]);
 
   // Import getReactionCounts từ helper
@@ -311,12 +253,7 @@ export const getFeedPostsService = async ({ userId, page = 1, limit = 20 }) => {
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
   // 1. Lấy danh sách user IDs mà current user đang follow
-  const followingUsers = await prisma.follow.findMany({
-    where: { followerId: userId },
-    select: { followingId: true }
-  });
-
-  const followingUserIds = followingUsers.map(f => f.followingId);
+  const followingUserIds = await followRepository.getFollowingIdsByUserId(userId);
   const allowedUserIds = [...followingUserIds, userId];
 
   if (allowedUserIds.length === 0) {
@@ -331,8 +268,8 @@ export const getFeedPostsService = async ({ userId, page = 1, limit = 20 }) => {
   // 2. Query posts và reposts song song
   const [posts, reposts] = await Promise.all([
     // Query posts
-    prisma.post.findMany({
-      where: {
+    postRepository.findPostsWithInclude(
+      {
         deletedAt: null,
         OR: [
           { userId: userId },
@@ -342,7 +279,7 @@ export const getFeedPostsService = async ({ userId, page = 1, limit = 20 }) => {
           }
         ]
       },
-      include: {
+      {
         user: { select: userSelectFields },
         media: {
           orderBy: { createdAt: 'asc' }
@@ -355,11 +292,13 @@ export const getFeedPostsService = async ({ userId, page = 1, limit = 20 }) => {
           }
         }
       },
-      orderBy: { createdAt: 'desc' }
-    }),
+      {
+        orderBy: { createdAt: 'desc' }
+      }
+    ),
     // Query reposts
-    prisma.repost.findMany({
-      where: {
+    postRepository.findRepostsWithInclude(
+      {
         deletedAt: null,
         userId: { in: allowedUserIds },
         post: {
@@ -373,7 +312,7 @@ export const getFeedPostsService = async ({ userId, page = 1, limit = 20 }) => {
           ]
         }
       },
-      include: {
+      {
         user: {
           select: userSelectFields
         },
@@ -398,8 +337,10 @@ export const getFeedPostsService = async ({ userId, page = 1, limit = 20 }) => {
           }
         }
       },
-      orderBy: { createdAt: 'desc' }
-    })
+      {
+        orderBy: { createdAt: 'desc' }
+      }
+    )
   ]);
 
   // 3. Lấy tất cả IDs cần thiết
@@ -421,32 +362,9 @@ export const getFeedPostsService = async ({ userId, page = 1, limit = 20 }) => {
   ] = await Promise.all([
     getReactionCounts(allPostIds, 'POST'),
     getReactionCounts(allRepostIds, 'REPOST'),
-    prisma.repost.groupBy({
-      by: ['postId'],
-      where: {
-        postId: { in: allPostIds },
-        deletedAt: null
-      },
-      _count: { id: true }
-    }),
-    prisma.comment.groupBy({
-      by: ['postId'],
-      where: {
-        postId: { in: allPostIds },
-        repostId: null,
-        deletedAt: null
-      },
-      _count: { id: true }
-    }),
-    prisma.comment.groupBy({
-      by: ['repostId'],
-      where: {
-        repostId: { in: allRepostIds },
-        postId: null,
-        deletedAt: null
-      },
-      _count: { id: true }
-    })
+    postRepository.groupRepostsByPostId(allPostIds),
+    postRepository.groupCommentsByPostId(allPostIds),
+    postRepository.groupCommentsByRepostId(allRepostIds)
   ]);
 
   // 5. Tạo maps cho counts
@@ -471,55 +389,18 @@ export const getFeedPostsService = async ({ userId, page = 1, limit = 20 }) => {
     myRepostReactions,
     mySavedPosts,
     myReposts,
-    viewedPosts,
-    viewedReposts
+    postViews
   ] = await Promise.all([
-    prisma.reaction.findMany({
-      where: {
-        userId: userId,
-        targetId: { in: allPostIds },
-        targetType: 'POST'
-      },
-      select: { targetId: true }
-    }),
-    prisma.reaction.findMany({
-      where: {
-        userId: userId,
-        targetId: { in: allRepostIds },
-        targetType: 'REPOST'
-      },
-      select: { targetId: true }
-    }),
-    prisma.savedPost.findMany({
-      where: {
-        userId: userId,
-        postId: { in: allPostIds }
-      },
-      select: { postId: true }
-    }),
-    prisma.repost.findMany({
-      where: {
-        userId: userId,
-        postId: { in: allPostIds },
-        deletedAt: null
-      },
-      select: { postId: true }
-    }),
-    prisma.postView.findMany({
-      where: {
-        userId: userId,
-        postId: { in: allPostIds, not: null }
-      },
-      select: { postId: true }
-    }),
-    prisma.postView.findMany({
-      where: {
-        userId: userId,
-        repostId: { in: allRepostIds, not: null }
-      },
-      select: { repostId: true }
-    })
+    postRepository.findReactionsByUserAndTargetIds(userId, allPostIds, 'POST', { targetId: true }),
+    postRepository.findReactionsByUserAndTargetIds(userId, allRepostIds, 'REPOST', { targetId: true }),
+    postRepository.findSavedPostsByUserAndPostIds(userId, allPostIds),
+    postRepository.findRepostsByUserAndPostIds(userId, allPostIds, { postId: true }),
+    postRepository.findPostViewsByUser(userId, allPostIds, allRepostIds, { postId: true, repostId: true })
   ]);
+
+  // Tách post views thành 2 mảng
+  const viewedPosts = postViews.filter(v => v.postId).map(v => ({ postId: v.postId }));
+  const viewedReposts = postViews.filter(v => v.repostId).map(v => ({ repostId: v.repostId }));
 
   // 7. Tạo Sets cho quick lookup
   const myReactionPostIds = new Set(myPostReactions.map(r => r.targetId));
@@ -597,8 +478,20 @@ export const getFeedPostsService = async ({ userId, page = 1, limit = 20 }) => {
 
   // 12. Đếm total
   const [totalPosts, totalReposts] = await Promise.all([
-    prisma.post.count({
-      where: {
+    postRepository.countPostsWithWhere({
+      deletedAt: null,
+      OR: [
+        { userId: userId },
+        {
+          userId: { in: followingUserIds },
+          whoCanSee: { in: ['everyone', 'followers'] }
+        }
+      ]
+    }),
+    postRepository.countRepostsWithWhere({
+      deletedAt: null,
+      userId: { in: allowedUserIds },
+      post: {
         deletedAt: null,
         OR: [
           { userId: userId },
@@ -607,22 +500,6 @@ export const getFeedPostsService = async ({ userId, page = 1, limit = 20 }) => {
             whoCanSee: { in: ['everyone', 'followers'] }
           }
         ]
-      }
-    }),
-    prisma.repost.count({
-      where: {
-        deletedAt: null,
-        userId: { in: allowedUserIds },
-        post: {
-          deletedAt: null,
-          OR: [
-            { userId: userId },
-            {
-              userId: { in: followingUserIds },
-              whoCanSee: { in: ['everyone', 'followers'] }
-            }
-          ]
-        }
       }
     })
   ]);
@@ -634,6 +511,263 @@ export const getFeedPostsService = async ({ userId, page = 1, limit = 20 }) => {
     total,
     page: parseInt(page),
     limit: parseInt(limit)
+  };
+};
+
+/**
+ * Lấy post theo ID với đầy đủ thông tin
+ * @param {Object} options - Các options
+ * @param {number} options.postId - ID của post
+ * @param {number} options.currentUserId - ID của user hiện tại
+ * @returns {Promise<{success: boolean, post?: Object, message?: string, statusCode?: number}>}
+ */
+export const getPostByIdService = async ({ postId, currentUserId }) => {
+  const post = await postRepository.findPostByIdWithInclude(postId, {
+    user: { select: userSelectFields },
+    media: {
+      select: { id: true, mediaUrl: true, mediaType: true }
+    },
+    _count: { select: { comments: true, reposts: true, savedPosts: true } }
+  });
+
+  if (!post) {
+    return {
+      success: false,
+      message: 'Bài viết không tồn tại hoặc đã bị xóa!',
+      statusCode: 404
+    };
+  }
+
+  // Kiểm tra quyền truy cập
+  const accessCheck = await checkPostAccess({
+    post,
+    currentUserId,
+    postOwnerId: post.userId
+  });
+
+  if (!accessCheck.allowed) {
+    return {
+      success: false,
+      message: accessCheck.message,
+      statusCode: 403
+    };
+  }
+
+  // Get reaction count
+  const reactionCount = await postRepository.countReactionsByPostId(postId, 'POST');
+
+  // Lấy thêm 10 repost gần nhất
+  const reposts = await postRepository.findRepostsByPostId(postId, {
+    take: 10,
+    include: {
+      user: { select: userSelectFields }
+    }
+  });
+
+  // Kiểm tra xem current user có repost post này không
+  let myRepost = null;
+  if (currentUserId) {
+    myRepost = await postRepository.findRepostByUserAndPost(currentUserId, postId, {
+      user: { select: userSelectFields }
+    });
+  }
+
+  return {
+    success: true,
+    post: {
+      ...post,
+      reposts,
+      isRepost: !!myRepost,
+      repostedBy: myRepost?.user || null,
+      repostContent: myRepost?.content || null,
+      _count: {
+        ...post._count,
+        reactions: reactionCount
+      }
+    }
+  };
+};
+
+/**
+ * Xóa post (soft delete)
+ * @param {Object} options - Các options
+ * @param {number} options.postId - ID của post
+ * @param {number} options.userId - ID của user
+ * @returns {Promise<{success: boolean, post?: Object, message?: string, statusCode?: number}>}
+ */
+export const deletePostService = async ({ postId, userId }) => {
+  // Kiểm tra bài viết có tồn tại và thuộc về user
+  const post = await postRepository.findPostByUserIdAndPostId(postId, userId);
+
+  if (!post) {
+    return {
+      success: false,
+      message: 'Bài viết không tồn tại hoặc không thuộc về bạn!',
+      statusCode: 404
+    };
+  }
+
+  // Soft delete
+  const deletedPost = await postRepository.updatePostDeletedAt(postId);
+
+  return {
+    success: true,
+    message: 'Xóa bài viết thành công',
+    post: deletedPost
+  };
+};
+
+/**
+ * Lưu post
+ * @param {Object} options - Các options
+ * @param {number} options.postId - ID của post
+ * @param {number} options.userId - ID của user
+ * @returns {Promise<{success: boolean, saved?: Object, message?: string, statusCode?: number}>}
+ */
+export const savePostService = async ({ postId, userId }) => {
+  // Check post tồn tại
+  const post = await postRepository.findPostByIdBasic(postId);
+
+  if (!post) {
+    return {
+      success: false,
+      message: 'Bài viết không tồn tại hoặc đã bị xoá!',
+      statusCode: 404
+    };
+  }
+
+  // Save hoặc bỏ qua nếu đã tồn tại
+  const saved = await postRepository.upsertSavedPost(userId, postId);
+
+  return {
+    success: true,
+    message: 'Đã lưu bài viết!',
+    saved
+  };
+};
+
+/**
+ * Bỏ lưu post
+ * @param {Object} options - Các options
+ * @param {number} options.postId - ID của post
+ * @param {number} options.userId - ID của user
+ * @returns {Promise<{success: boolean, message?: string}>}
+ */
+export const unsavePostService = async ({ postId, userId }) => {
+  await postRepository.deleteSavedPost(userId, postId);
+
+  return {
+    success: true,
+    message: 'Đã bỏ lưu bài viết.'
+  };
+};
+
+/**
+ * Lấy preview posts của user
+ * @param {Object} options - Các options
+ * @param {number} options.targetUserId - ID của user
+ * @param {number} options.currentUserId - ID của user hiện tại
+ * @param {number} options.page - Số trang
+ * @param {number} options.limit - Số lượng items mỗi trang
+ * @returns {Promise<{success: boolean, posts?: Array, message?: string, statusCode?: number}>}
+ */
+export const getUserPostsPreviewService = async ({ targetUserId, currentUserId, page = 1, limit = 12 }) => {
+  // Kiểm tra quyền xem posts của user
+  const accessCheck = await checkUserPostsAccess({
+    currentUserId,
+    targetUserId
+  });
+
+  if (!accessCheck.allowed) {
+    const statusCode = accessCheck.message.includes('không tồn tại') ? 404 : 403;
+    return {
+      success: false,
+      message: accessCheck.message,
+      statusCode
+    };
+  }
+
+  const isSelf = targetUserId === currentUserId;
+  const skip = (page - 1) * limit;
+
+  const whereClause = { userId: targetUserId, deletedAt: null };
+
+  if (!isSelf && currentUserId) {
+    const isFollowingUser = await isFollowing(currentUserId, targetUserId);
+    whereClause.whoCanSee = isFollowingUser ? { in: ['everyone', 'followers'] } : 'everyone';
+  } else if (!isSelf) {
+    whereClause.whoCanSee = 'everyone';
+  }
+
+  const posts = await postRepository.findPostsByWhere(
+    whereClause,
+    {
+      id: true,
+      media: { take: 1, select: { mediaUrl: true, mediaType: true } },
+      _count: { select: { comments: true, reposts: true, savedPosts: true } }
+    },
+    {
+      skip,
+      take: parseInt(limit),
+      orderBy: { createdAt: 'desc' }
+    }
+  );
+
+  const postIds = posts.map(p => p.id);
+
+  // Lấy reaction counts và reposts counts cho posts
+  const [reactionCountMap, repostsCountMap] = await Promise.all([
+    getReactionCounts(postIds, 'POST'),
+    postRepository.groupRepostsByPostId(postIds)
+  ]);
+
+  // Tạo map repostsCount: postId -> count
+  const repostsCountByPostId = {};
+  repostsCountMap.forEach(item => {
+    repostsCountByPostId[item.postId] = item._count.id;
+  });
+
+  const postsWithCounts = posts.map(post => ({
+    id: post.id,
+    previewImage: post.media[0]?.mediaUrl || null,
+    previewMediaType: post.media[0]?.mediaType || null,
+    reactionCount: reactionCountMap[post.id] || 0,
+    commentCount: post._count.comments || 0,
+    repostsCount: repostsCountByPostId[post.id] || 0,
+    savesCount: post._count.savedPosts || 0
+  }));
+
+  return {
+    success: true,
+    posts: postsWithCounts
+  };
+};
+
+/**
+ * Đánh dấu post đã xem
+ * @param {Object} options - Các options
+ * @param {number} options.postId - ID của post
+ * @param {number} options.userId - ID của user
+ * @returns {Promise<{success: boolean, message?: string, statusCode?: number}>}
+ */
+export const markPostAsViewedService = async ({ postId, userId }) => {
+  // Kiểm tra post có tồn tại không
+  const post = await postRepository.findPostByIdUnique(postId, { id: true, deletedAt: true });
+
+  if (!post || post.deletedAt) {
+    return {
+      success: false,
+      message: 'Bài viết không tồn tại',
+      statusCode: 404
+    };
+  }
+
+  // Upsert post view
+  await postRepository.upsertPostView(postId, userId);
+
+  return {
+    success: true,
+    message: 'Đã đánh dấu bài viết đã xem'
   };
 };
 

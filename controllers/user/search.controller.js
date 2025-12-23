@@ -1,73 +1,15 @@
-import prisma from "../../utils/prisma.js";
+import { searchUsers as searchUsersService } from "../../services/searchService.js";
 import { addSearchSelection, getSearchHistory, clearSearchHistory, removeSearchItem } from "../../services/redis/searchHistoryService.js";
 
 // GET /api/user/search?q=...
 export const searchUsers = async (req, res) => {
   try {
     const query = (req.query.q || req.query.query || "").trim();
-    if (!query) {
-      return res.json({ success: true, users: [] });
-    }
-
     const currentUserId = req.user.id;
 
-    const users = await prisma.user.findMany({
-      where: {
-        OR: [
-          { username: { contains: query, mode: "insensitive" } },
-          { fullName: { contains: query, mode: "insensitive" } },
-        ],
-      },
-      select: {
-        id: true,
-        username: true,
-        fullName: true,
-        avatarUrl: true,
-        privacySettings: {
-          select: {
-            whoCanFindByUsername: true,
-          },
-        },
-        ...(currentUserId ? {
-          followers: {
-            where: { followerId: currentUserId },
-            select: { followerId: true },
-            take: 1,
-          },
-        } : {}),
-      },
-      take: 50,
-      orderBy: { createdAt: "desc" },
-    });
+    const users = await searchUsersService(query, currentUserId);
 
-    const filteredUsers = users.filter((user) => {
-      if (currentUserId && user.id === currentUserId) {
-        return true;
-      }
-
-      const whoCanFind = user.privacySettings?.whoCanFindByUsername || "everyone";
-
-      if (whoCanFind === "everyone") {
-        return true;
-      }
-
-      if (whoCanFind === "nobody") {
-        return false;
-      }
-
-      if (whoCanFind === "followers") {
-        if (currentUserId) {
-          return user.followers && user.followers.length > 0;
-        }
-        return false;
-      }
-
-      return true;
-    }).slice(0, 10);
-    // Loại bỏ privacySettings và followers khỏi mỗi user object
-    const cleanUsers = filteredUsers.map(({ privacySettings, followers, ...user }) => user);
-
-    return res.json({ success: true, users: cleanUsers });
+    return res.json({ success: true, users });
   } catch (error) {
     console.error("Search users error:", error);
     return res.status(500).json({ success: false, message: "Tìm kiếm thất bại" });
