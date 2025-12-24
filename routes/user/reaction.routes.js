@@ -11,13 +11,13 @@ const router = express.Router();
 // Thả hoặc đổi reaction
 router.post("/", createOrUpdateReaction);
 
-// Lấy danh sách reaction của 1 target 
+// Lấy danh sách reaction của 1 target bao gồm type và user info
 router.get("/", getReactions);
 
 // Lấy reaction của user hiện tại cho 1 target
 router.get("/me", getMyReaction);
 
-// Lấy thống kê số lượng reactions theo từng type
+// Lấy thống kê số lượng reactions theo từng type cho 1 target
 router.get("/stats", getReactionStats);
 
 export default router;

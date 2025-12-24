@@ -139,6 +139,48 @@ export const markRepostAsViewedService = async (repostId, userId) => {
 };
 
 /**
+ * Lấy repost theo ID với post gốc
+ * @param {number} repostId - ID của repost
+ * @param {number} currentUserId - ID của user đang xem
+ * @returns {Promise<Object>} Repost với post gốc
+ * @throws {RepostServiceError} Nếu có lỗi xảy ra
+ */
+export const getRepostByIdService = async (repostId, currentUserId) => {
+  const parsedRepostId = Number(repostId);
+  if (!parsedRepostId || isNaN(parsedRepostId)) {
+    throw new RepostServiceError('ID repost không hợp lệ!', 400);
+  }
+
+  // Fetch repost với post và user
+  const repost = await repostRepository.findRepostById(parsedRepostId, {}, {
+    post: {
+      include: {
+        user: {
+          select: { id: true, username: true, fullName: true, avatarUrl: true }
+        },
+        media: {
+          select: { id: true, mediaUrl: true, mediaType: true }
+        },
+        _count: {
+          select: { comments: true, reposts: true, savedPosts: true }
+        }
+      }
+    },
+    user: {
+      select: { id: true, username: true, fullName: true, avatarUrl: true }
+    }
+  });
+
+  if (!repost || repost.deletedAt) {
+    throw new RepostServiceError('Repost không tồn tại hoặc đã bị xóa!', 404);
+  }
+  return {
+    ...repost,
+    post: repost.post
+  };
+};
+
+/**
  * Lấy danh sách reposts của một user
  * @param {number} targetUserId - ID của user cần lấy reposts
  * @param {number} currentUserId - ID của user đang xem (luôn có vì route yêu cầu authenticate)

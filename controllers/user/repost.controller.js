@@ -2,7 +2,8 @@ import {
   getUserReposts as getUserRepostsService,
   createRepostService,
   undoRepostService,
-  markRepostAsViewedService
+  markRepostAsViewedService,
+  getRepostByIdService
 } from "../../services/repostService.js";
 /**
  * GET /api/user/:username/reposts
@@ -71,6 +72,33 @@ export const undoRepost = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Lỗi server khi hủy repost!'
+    });
+  }
+};
+
+// GET /api/user/reposts/:repostId - Lấy repost theo ID
+export const getRepostById = async (req, res) => {
+  try {
+    const { repostId } = req.params;
+    const currentUserId = req.user.id;
+
+    const repost = await getRepostByIdService(repostId, currentUserId);
+
+    res.json({
+      success: true,
+      repost
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message
+      });
+    }
+    console.error('Error getting repost:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi lấy repost!'
     });
   }
 };
