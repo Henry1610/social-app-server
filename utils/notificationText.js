@@ -2,8 +2,8 @@
 export const formatNotificationMessage = (notification) => {
   const { type, metadata, actor, targetType } = notification;
   
-  // Xác định loại nội dung: "bài viết" (POST) hoặc "bài đăng lại" (REPOST)
-  const contentType = targetType === 'REPOST' ? 'bài đăng lại' : 'bài viết';
+  // Xác định loại nội dung: "bài viết" (POST), "bài đăng lại" (REPOST), hoặc "tin nhắn" (MESSAGE)
+  const contentType = targetType === 'REPOST' ? 'bài đăng lại' : targetType === 'MESSAGE' ? 'tin nhắn' : 'bài viết';
   
   // Nếu có metadata (thông báo đã gom nhóm)
   if (metadata && metadata.count > 1) {
@@ -19,10 +19,18 @@ export const formatNotificationMessage = (notification) => {
         }
         
       case 'REACTION':
-        if (count === 2) {
-          return `${actorName} và 1 người khác đã thích ${contentType} của bạn.`;
+        if (targetType === 'MESSAGE') {
+          if (count === 2) {
+            return `${actorName} và 1 người khác đã bày tỏ cảm xúc vào ${contentType} của bạn.`;
+          } else {
+            return `${actorName} và ${count - 1} người khác đã bày tỏ cảm xúc vào ${contentType} của bạn.`;
+          }
         } else {
-          return `${actorName} và ${count - 1} người khác đã thích ${contentType} của bạn.`;
+          if (count === 2) {
+            return `${actorName} và 1 người khác đã thích ${contentType} của bạn.`;
+          } else {
+            return `${actorName} và ${count - 1} người khác đã thích ${contentType} của bạn.`;
+          }
         }
         
       case 'COMMENT':
@@ -66,7 +74,11 @@ export const formatNotificationMessage = (notification) => {
       return `${actorName} đã theo dõi bạn.`;
       
     case 'REACTION':
-      return `${actorName} đã thích ${contentType} của bạn.`;
+      if (targetType === 'MESSAGE') {
+        return `${actorName} đã bày tỏ cảm xúc vào ${contentType} của bạn.`;
+      } else {
+        return `${actorName} đã thích ${contentType} của bạn.`;
+      }
       
     case 'COMMENT':
       return `${actorName} đã bình luận ${contentType} của bạn.`;

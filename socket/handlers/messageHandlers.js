@@ -2,6 +2,8 @@ import prisma from '../../utils/prisma.js';
 import { createMessageWithStates } from '../../services/messageService.js';
 import { checkConversationAccess } from '../../services/conversationService.js';
 import { getConversationMembers, emitConversationUpdate } from './helpers/chatHelpers.js';
+import { createOrUpdateReactionService } from '../../services/reactionService.js';
+import * as messageRepository from '../../repositories/messageRepository.js';
 
 // Xử lý các event liên quan đến message
 export const registerMessageHandlers = (socket, userId, io) => {
@@ -271,6 +273,74 @@ export const registerMessageHandlers = (socket, userId, io) => {
         } catch (error) {
             console.error('Error handling chat:recall_message:', error);
             socket.emit('chat:error', { message: 'Lỗi khi thu hồi tin nhắn' });
+        }
+    });
+
+    // React to message
+    socket.on('chat:react_message', async (data) => {
+        try {
+            console.log('Received chat:react_message event with data:', data);
+            const { messageId, conversationId, reactionType = 'LIKE' } = data;
+
+            if (!messageId || !conversationId) {
+                socket.emit('chat:error', { message: 'messageId và conversationId là bắt buộc' });
+                return;
+            }
+
+            // 1. Kiểm tra quyền (user có trong conversation không)
+            const hasAccess = await checkConversationAccess(userId, conversationId);
+            if (!hasAccess) {
+                socket.emit('chat:error', { message: 'Không có quyền react tin nhắn trong cuộc trò chuyện này' });
+                return;
+            }
+
+            // 2. Kiểm tra message tồn tại và thuộc conversation
+            const message = await messageRepository.findMessageById(parseInt(messageId), {
+                sender: {
+                    select: {
+                        id: true,
+                        username: true,
+                        fullName: true,
+                        avatarUrl: true
+                    }
+                }
+            });
+
+            if (!message || message.deletedAt || message.isRecalled) {
+                socket.emit('chat:error', { message: 'Tin nhắn không tồn tại hoặc đã bị xóa' });
+                return;
+            }
+
+            if (message.conversationId !== parseInt(conversationId)) {
+                socket.emit('chat:error', { message: 'Tin nhắn không thuộc cuộc trò chuyện này' });
+                return;
+            }
+
+            // 3. Tạo/update reaction trong DB (qua service)
+            const result = await createOrUpdateReactionService({
+                userId,
+                targetId: parseInt(messageId),
+                targetType: 'MESSAGE',
+                type: reactionType
+            });
+
+            if (!result.success) {
+                socket.emit('chat:error', { message: result.message || 'Có lỗi xảy ra khi react tin nhắn' });
+                return;
+            }
+
+            // 4. Broadcast realtime vào room conversation
+            io.to(`conversation_${conversationId}`).emit('chat:message_reaction_updated', {
+                messageId: parseInt(messageId),
+                conversationId: parseInt(conversationId),
+                reaction: result.reaction,
+                userId,
+                action: result.reaction ? 'added' : 'removed' // 'added' hoặc 'removed'
+            });
+
+        } catch (error) {
+            console.error('Error reacting to message:', error);
+            socket.emit('chat:error', { message: 'Có lỗi xảy ra khi react tin nhắn' });
         }
     });
 };

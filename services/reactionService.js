@@ -3,6 +3,7 @@ import * as commentRepository from "../repositories/commentRepository.js";
 import * as reactionRepository from "../repositories/reactionRepository.js";
 import * as postRepository from "../repositories/postRepository.js";
 import * as repostRepository from "../repositories/repostRepository.js";
+import * as messageRepository from "../repositories/messageRepository.js";
 
 // Helper: User select fields (dùng chung cho nhiều queries)
 const userSelectFields = {
@@ -107,6 +108,24 @@ export const createOrUpdateReactionService = async ({ userId, targetId, targetTy
           metadata = {
             repostId: Number(targetId),
             postId: repost.postId
+          };
+        }
+      } else if (targetTypeUpper === "MESSAGE") {
+        const message = await messageRepository.findMessageById(Number(targetId), {
+          sender: {
+            select: { id: true }
+          },
+          conversation: {
+            select: { id: true }
+          }
+        });
+        
+        if (message) {
+          targetUserId = message.senderId;
+          // Thêm metadata để client có thể navigate đúng
+          metadata = {
+            messageId: Number(targetId),
+            conversationId: message.conversationId
           };
         }
       }
