@@ -9,6 +9,7 @@ import { seedComments } from "./seed/comments.seed.js";
 import { seedSavedPosts } from "./seed/savedPosts.seed.js";
 import { seedFollowRequests } from "./seed/followRequests.seed.js";
 import { seedConversations } from "./seed/conversations.seed.js";
+import { seedNotifications } from "./seed/notifications.seed.js";
 const prisma = new PrismaClient();
 
 async function main() {
@@ -22,6 +23,7 @@ async function main() {
   await seedComments();
   await seedSavedPosts();
   await seedConversations();
+  await seedNotifications();
 }
 
 main()
