@@ -1,6 +1,6 @@
 # 🚀 Social App Backend Server
 
-Backend server cho ứng dụng mạng xã hội, được xây dựng với Node.js, Express, Prisma, PostgreSQL, Socket.io, và các dịch vụ tích hợp như Cloudinary, Nodemailer, Redis, Twilio.
+Backend server cho ứng dụng mạng xã hội, được xây dựng với Node.js, Express, Prisma, PostgreSQL, Socket.io, và các dịch vụ tích hợp như Cloudinary, Resend, Redis, Twilio.
 
 ## 📑 Table of Contents
 
@@ -26,7 +26,7 @@ Backend server cho ứng dụng mạng xã hội, được xây dựng với Nod
 - **Real-time**: Socket.io
 - **Cache / Session Store**: Redis (ioredis)
 - **File Upload**: Cloudinary + Multer
-- **Email**: Nodemailer
+- **Email**: Resend
 - **SMS**: Twilio
 - **Session**: express-session
 
@@ -43,7 +43,7 @@ Backend server cho ứng dụng mạng xã hội, được xây dựng với Nod
 
 ```bash
 git clone <repo-url>
-cd sever
+cd server
 ```
 
 ### 2. Cài đặt dependencies
@@ -54,7 +54,7 @@ npm install
 
 ### 3. Tạo file `.env`
 
-Tạo file `.env` trong thư mục `sever/` với nội dung:
+Tạo file `.env` trong thư mục `server/` với nội dung:
 
 ```env
 PORT=5000
@@ -75,10 +75,8 @@ CLOUDINARY_CLOUD_NAME=your-cloud
 CLOUDINARY_API_KEY=your-api-key
 CLOUDINARY_API_SECRET=your-api-secret
 
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=587
-EMAIL_USER=your-email@gmail.com
-EMAIL_PASS=your-app-password
+RESEND_API_KEY=your-resend-api-key
+EMAIL_FROM=onboarding@resend.dev
 
 TWILIO_ACCOUNT_SID=your-sid
 TWILIO_AUTH_TOKEN=your-token
@@ -121,7 +119,7 @@ NODE_ENV=production npm start
 ## 📁 Project Structure
 
 ```
-sever/
+server/
 ├── config/             
 │   ├── cloudinary.js       
 │   ├── passport.js         
