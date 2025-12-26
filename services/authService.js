@@ -54,7 +54,21 @@ export const sendOtpService = async (email, phone) => {
   await redisClient.set(key, otp, "EX", ttlSec);
 
   // Gửi OTP
-  if (email) await sendEmail(email, otp);
+  if (email) {
+    const otpHtml = `
+      <h2 style="color: #333; text-align: center;">Xác thực đăng ký tài khoản</h2>
+      <p>Xin chào!</p>
+      <p>Cảm ơn bạn đã đăng ký tài khoản. Vui lòng sử dụng mã OTP sau để hoàn tất quá trình đăng ký:</p>
+      <div style="background: #f8f9fa; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0;">
+        <h1 style="color: #007bff; font-size: 32px; letter-spacing: 8px; margin: 0;">${otp}</h1>
+      </div>
+      <ul>
+        <li>Mã OTP có hiệu lực trong 5 phút.</li>
+        <li>Không chia sẻ mã này với bất kỳ ai.</li>
+      </ul>
+    `;
+    await sendEmail(email, otpHtml, { subject: "Mã xác thực đăng ký tài khoản" });
+  }
   if (phone) await sendSMS(phone, `Mã OTP của bạn là: ${otp}`);
 
   return {
@@ -329,7 +343,34 @@ export const requestResetPasswordService = async (email) => {
   const token = createResetPasswordToken(user.id);
   const resetLink = `${process.env.CLIENT_URL}/reset-password?token=${token}`;
 
-  await sendEmail(email, `<p>Click link để reset mật khẩu:</p><a href="${resetLink}">${resetLink}</a>`);
+  const resetPasswordHtml = `
+    <h2 style="color: #333; text-align: center;">Đặt lại mật khẩu</h2>
+    <p>Xin chào!</p>
+    <p>Bạn đã yêu cầu đặt lại mật khẩu. Vui lòng click vào nút bên dưới để tiếp tục:</p>
+    <div style="text-align: center; margin: 30px 0;">
+      <a href="${resetLink}" style="background-color: #007bff; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">Đặt lại mật khẩu</a>
+    </div>
+    <p style="color: #666; font-size: 14px;">Hoặc copy và dán link sau vào trình duyệt:</p>
+    <p style="color: #007bff; word-break: break-all; font-size: 12px;">${resetLink}</p>
+    <ul style="color: #666; font-size: 14px;">
+      <li>Link có hiệu lực trong 15 phút.</li>
+      <li>Nếu bạn không yêu cầu đặt lại mật khẩu, vui lòng bỏ qua email này.</li>
+      <li>Không chia sẻ link này với bất kỳ ai.</li>
+    </ul>
+  `;
+
+  try {
+    await sendEmail(email, resetPasswordHtml, { 
+      subject: "Đặt lại mật khẩu"
+    });
+  } catch (error) {
+    console.error("Error sending reset password email:", error);
+    return {
+      success: false,
+      message: "Gửi email thất bại. Vui lòng thử lại sau.",
+      statusCode: 500
+    };
+  }
 
   return {
     success: true,
@@ -344,6 +385,7 @@ export const requestResetPasswordService = async (email) => {
  * @returns {Promise<{success: boolean, message?: string, statusCode?: number}>}
  */
 export const resetPasswordService = async (token, newPassword) => {
+  
   if (!token) {
     return {
       success: false,
@@ -352,12 +394,37 @@ export const resetPasswordService = async (token, newPassword) => {
     };
   }
 
+  if (!newPassword) {
+    return {
+      success: false,
+      message: "Mật khẩu mới không được để trống",
+      statusCode: 400
+    };
+  }
+
+  if (newPassword.length < 6) {
+    return {
+      success: false,
+      message: "Mật khẩu phải có ít nhất 6 ký tự",
+      statusCode: 400
+    };
+  }
+
   try {
     const decoded = jwt.verify(token, process.env.JWT_RESET_SECRET);
     const userId = decoded.id;
 
-    const passwordHash = await bcrypt.hash(newPassword, 10);
+    // Kiểm tra user có tồn tại không
+    const user = await userRepository.findUserById(userId);
+    if (!user) {
+      return {
+        success: false,
+        message: "Người dùng không tồn tại",
+        statusCode: 404
+      };
+    }
 
+    const passwordHash = await bcrypt.hash(newPassword, 10);
     await userRepository.updateUserPassword(userId, passwordHash);
 
     return {
@@ -365,6 +432,23 @@ export const resetPasswordService = async (token, newPassword) => {
       message: "Reset mật khẩu thành công"
     };
   } catch (err) {
+    // Xử lý các lỗi cụ thể
+    if (err.name === 'TokenExpiredError') {
+      return {
+        success: false,
+        message: "Token đã hết hạn. Vui lòng yêu cầu reset mật khẩu lại.",
+        statusCode: 400
+      };
+    }
+    if (err.name === 'JsonWebTokenError' || err.name === 'NotBeforeError') {
+      return {
+        success: false,
+        message: "Token không hợp lệ",
+        statusCode: 400
+      };
+    }
+    
+    console.error("Reset password error:", err);
     return {
       success: false,
       message: "Reset mật khẩu thất bại!",

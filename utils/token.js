@@ -19,9 +19,9 @@ export const createAccessToken = (user) => {
   );
 };
 
-export const createResetPasswordToken = (user) => {
+export const createResetPasswordToken = (userId) => {
   const token = jwt.sign(
-    { id:user.id },
+    { id: userId },
     process.env.JWT_RESET_SECRET,
     { expiresIn: '15m' } 
   );
