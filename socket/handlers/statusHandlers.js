@@ -8,27 +8,13 @@ export const registerStatusHandlers = (socket, userId, io) => {
     socket.on('chat:typing', async (data) => {
         const { conversationId, isTyping } = data;
 
-        // Emit to conversation room (for ChatMain)
+        // Emit to conversation room - tất cả user trong conversation đã join room này khi connect
+        // Nên chỉ cần emit đến conversation room là đủ cho cả ChatMain và ChatSidebar
         socket.to(`conversation_${conversationId}`).emit('chat:user_typing', {
             userId,
             isTyping,
             conversationId
         });
-
-        // Also emit to all conversation members' user rooms (for ChatSidebar)
-        try {
-            const conversationMembers = await getConversationMembers(conversationId, userId);
-
-            conversationMembers.forEach(member => {
-                socket.to(`user_${member.userId}`).emit('chat:user_typing', {
-                    userId,
-                    isTyping,
-                    conversationId
-                });
-            });
-        } catch (error) {
-            console.error('Error getting conversation members for typing:', error);
-        }
     });
 
     // Handle message seen - chuyển từ DELIVERED thành READ từ mới nhất đổ về trước
